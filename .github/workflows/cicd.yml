@@ -73,7 +73,7 @@ jobs:
     name: Deploy to Local Tomcat
     runs-on: [self-hosted, Windows]
     needs: [build-and-test, code-quality]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/m1')
     concurrency:
       group: local-tomcat-deploy
       cancel-in-progress: false
