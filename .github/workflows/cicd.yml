@@ -101,6 +101,19 @@ jobs:
           $warDest = Join-Path $targetPath 'ci-cd-demo.war'
 
           $tomcatBase = Split-Path -Path $targetPath -Parent
+          $serverXml = Join-Path $tomcatBase 'conf\server.xml'
+          if (-not (Test-Path $serverXml -PathType Leaf)) { throw "Tomcat server.xml not found: $serverXml" }
+          [xml]$tomcatConfig = Get-Content -LiteralPath $serverXml -Raw
+          $httpConnector = @($tomcatConfig.Server.Service.Connector) |
+            Where-Object { "$($_.port)" -match '^\d+$' -and "$($_.protocol)" -notmatch '(?i)AJP' -and ("$($_.protocol)" -match '(?i)HTTP|CoyoteAdapter' -or "$($_.protocol)" -eq '') } |
+            Select-Object -First 1
+          if (-not $httpConnector) { throw "No numeric HTTP Connector port found in $serverXml" }
+          $tomcatPort = [string]$httpConnector.port
+          $warBaseName = [System.IO.Path]::GetFileNameWithoutExtension($warDest)
+          $contextPath = if ($warBaseName -eq 'ROOT') { '' } else { '/' + $warBaseName.Replace('#', '/') }
+          $healthUrl = "http://localhost:$tomcatPort$contextPath/test/msg"
+          Write-Host "Detected Tomcat port: $tomcatPort; deployed context: $contextPath"
+
           $logsDir = Join-Path $tomcatBase 'logs'
           $todayStr = Get-Date -Format "yyyy-MM-dd"
           $catalinaLog = Join-Path $logsDir "catalina.$todayStr.log"
@@ -133,7 +146,7 @@ jobs:
               $elapsedSec += $pollIntervalSec
 
               try {
-                $response = Invoke-WebRequest -Uri "http://localhost:8090/ci-cd-demo/test/msg" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+                $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
                 if ($response.StatusCode -eq 200 -and $response.Content -match "Hello Test Controller") {
                   $deployedVerified = $true
                   Write-Host "HTTP Health Check PASSED: 200 OK - '$($response.Content.Trim())'"
@@ -160,7 +173,7 @@ jobs:
               $reader.Close()
               $stream.Close()
 
-              $relevantLines = $newLogContent -split "`r?\n" | Where-Object { $_ -match "ci-cd-demo" -or $_ -match "HostConfig" -or $_ -match "Exception" -or $_ -match "Error" }
+              $relevantLines = $newLogContent -split "`r?`n" | Where-Object { $_ -match "ci-cd-demo" -or $_ -match "HostConfig" -or $_ -match "Exception" -or $_ -match "Error" }
               if ($relevantLines) {
                 $relevantLines | ForEach-Object { Write-Host $_ }
               }
@@ -168,7 +181,23 @@ jobs:
           }
 
           if (-not $deployedVerified) {
-            throw "Deployment Failed: Application at http://localhost:8090/ci-cd-demo/test/msg failed to respond with HTTP 200 and expected payload within $timeoutSec seconds."
+            throw "Deployment Failed: Application at $healthUrl failed to respond with HTTP 200 and expected payload within $timeoutSec seconds."
           }
 
           Write-Host "Deployment completed and verified successfully!"
+          Write-Host "========================================"
+          Write-Host "DEPLOYED APPLICATION URL: $healthUrl"
+          Write-Host "========================================"
+          Write-Host "Open this localhost URL on the runner/Tomcat PC."
+          if ($env:GITHUB_STEP_SUMMARY) {
+            @(
+              '## Tomcat deployment'
+              ''
+              "- WAR: $([System.IO.Path]::GetFileName($warDest))"
+              "- Detected Tomcat port: $tomcatPort"
+              "- Context path: $contextPath"
+              "- Verified endpoint: [$healthUrl]($healthUrl)"
+              '- HTTP check: 200 OK'
+              '- Note: localhost refers to the runner/Tomcat PC.'
+            ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          }
