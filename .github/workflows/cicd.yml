@@ -99,5 +99,76 @@ jobs:
             throw "Tomcat webapps directory not found: $targetPath"
           }
           $warDest = Join-Path $targetPath 'ci-cd-demo.war'
+
+          $tomcatBase = Split-Path -Path $targetPath -Parent
+          $logsDir = Join-Path $tomcatBase 'logs'
+          $todayStr = Get-Date -Format "yyyy-MM-dd"
+          $catalinaLog = Join-Path $logsDir "catalina.$todayStr.log"
+
+          # Record initial log size and timestamp before copying WAR
+          $deployStartTime = Get-Date
+          $initialLogSize = 0
+          if (Test-Path $catalinaLog) {
+            $initialLogSize = (Get-Item $catalinaLog).Length
+          }
+
           Copy-Item -LiteralPath $warSrc -Destination $warDest -Force -ErrorAction Stop
-          Write-Host "WAR copied to $warDest. Confirm Tomcat starts the app in its logs."
+          Write-Host "WAR copied to $warDest at $deployStartTime. Waiting for Tomcat auto-deployment..."
+
+          # Bounded polling for Tomcat redeployment & HTTP health check (max 45 seconds)
+          $timeoutSec = 45
+          $elapsedSec = 0
+          $pollIntervalSec = 3
+          $deployedVerified = $false
+
+          # Temporarily clear proxy env vars to ensure local localhost connection bypasses corporate proxy
+          $oldHttpProxy = $env:HTTP_PROXY
+          $oldHttpsProxy = $env:HTTPS_PROXY
+          $env:HTTP_PROXY = ""
+          $env:HTTPS_PROXY = ""
+
+          try {
+            while ($elapsedSec -lt $timeoutSec) {
+              Start-Sleep -Seconds $pollIntervalSec
+              $elapsedSec += $pollIntervalSec
+
+              try {
+                $response = Invoke-WebRequest -Uri "http://localhost:8090/ci-cd-demo/test/msg" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+                if ($response.StatusCode -eq 200 -and $response.Content -match "Hello Test Controller") {
+                  $deployedVerified = $true
+                  Write-Host "HTTP Health Check PASSED: 200 OK - '$($response.Content.Trim())'"
+                  break
+                }
+              } catch {
+                Write-Host "Waiting for Tomcat endpoint to respond... ($elapsedSec/$timeoutSec s)"
+              }
+            }
+          } finally {
+            $env:HTTP_PROXY = $oldHttpProxy
+            $env:HTTPS_PROXY = $oldHttpsProxy
+          }
+
+          # Stream NEW Tomcat log entries created during this deployment
+          if (Test-Path $catalinaLog) {
+            $currentLog = Get-Item $catalinaLog
+            if ($currentLog.Length -gt $initialLogSize) {
+              Write-Host "=== New Tomcat Log Entries (catalina.$todayStr.log) ==="
+              $stream = [System.IO.File]::Open($catalinaLog, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+              $reader = New-Object System.IO.StreamReader($stream)
+              $stream.Position = $initialLogSize
+              $newLogContent = $reader.ReadToEnd()
+              $reader.Close()
+              $stream.Close()
+
+              $relevantLines = $newLogContent -split "`r?\n" | Where-Object { $_ -match "ci-cd-demo" -or $_ -match "HostConfig" -or $_ -match "Exception" -or $_ -match "Error" }
+              if ($relevantLines) {
+                $relevantLines | ForEach-Object { Write-Host $_ }
+              }
+            }
+          }
+
+          if (-not $deployedVerified) {
+            throw "Deployment Failed: Application at http://localhost:8090/ci-cd-demo/test/msg failed to respond with HTTP 200 and expected payload within $timeoutSec seconds."
+          }
+
+          Write-Host "Deployment completed and verified successfully!"
