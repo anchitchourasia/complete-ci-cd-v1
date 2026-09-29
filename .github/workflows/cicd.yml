@@ -87,14 +87,16 @@ jobs:
         env:
           TOMCAT_WEBAPPS_PATH: ${{ secrets.TOMCAT_WEBAPPS_PATH }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:TOMCAT_WEBAPPS_PATH)) {
-            throw 'TOMCAT_WEBAPPS_PATH secret is missing. Deployment did not happen.'
+          $targetPath = $env:TOMCAT_WEBAPPS_PATH
+          if ([string]::IsNullOrWhiteSpace($targetPath)) {
+            $targetPath = 'E:\apache-tomcat-10.1.28\webapps'
+            Write-Host "TOMCAT_WEBAPPS_PATH secret not set. Using local default: $targetPath"
           }
           $warSrc = Join-Path $env:GITHUB_WORKSPACE 'deploy-artifact\ci-cd-demo.war'
           if (-not (Test-Path $warSrc -PathType Leaf)) { throw "WAR not found: $warSrc" }
-          if (-not (Test-Path $env:TOMCAT_WEBAPPS_PATH -PathType Container)) {
-            throw "Tomcat webapps directory not found: $env:TOMCAT_WEBAPPS_PATH"
+          if (-not (Test-Path $targetPath -PathType Container)) {
+            throw "Tomcat webapps directory not found: $targetPath"
           }
-          $warDest = Join-Path $env:TOMCAT_WEBAPPS_PATH 'ci-cd-demo.war'
+          $warDest = Join-Path $targetPath 'ci-cd-demo.war'
           Copy-Item -LiteralPath $warSrc -Destination $warDest -Force -ErrorAction Stop
           Write-Host "WAR copied to $warDest. Confirm Tomcat starts the app in its logs."
