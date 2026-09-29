@@ -3,7 +3,7 @@
 # Purpose: Builds Java 17 Spring Boot WAR application, runs unit tests,
 #          validates packaging, and deploys to local Apache Tomcat server.
 # ==============================================================================
-name: CI/CD Pipeline - complete-ci-cd-v1
+name: First pipeline test
 
 # Event Triggers: Specifies when the pipeline runs.
 # - Executes on commits pushed to 'main' or 'm1' branches.
