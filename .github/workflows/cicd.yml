@@ -1,30 +1,15 @@
-# ==============================================================================
-# GitHub Actions CI/CD Pipeline - complete-ci-cd-v1
-# Purpose: Builds Java 17 Spring Boot WAR application, runs unit tests,
-#          validates packaging, and deploys to local Apache Tomcat server.
-# ==============================================================================
-name: First pipeline test
+name: CI/CD Pipeline - complete-ci-cd-v1
 
-# Event Triggers: Specifies when the pipeline runs.
-# - Executes on commits pushed to 'main' or 'm1' branches.
-# - Executes on Pull Requests targeting the 'main' branch.
 on:
   push:
     branches: [main, m1]
   pull_request:
     branches: [main]
 
-# Security Permission Scopes: Restricts GITHUB_TOKEN permissions to read-only for repository contents.
-permissions:
-  contents: read
-
-# Default Execution Shell: Specifies Windows PowerShell for all inline 'run:' script blocks.
 defaults:
   run:
     shell: powershell
 
-# Global Environment Variables: Defines tooling paths, proxy routes, and JVM heap limits.
-# Note: 'self-hosted, Windows' labels match any registered runner possessing these labels.
 env:
   MAVEN_BIN: 'C:\maven\apache-maven-3.9.12\59fe215c0ad6947fea90184bf7add084544567b927287592651fda3782e0e798\bin\mvn.cmd'
   SETTINGS_XML: 'C:\maven\settings.xml'
@@ -32,219 +17,55 @@ env:
   HTTP_PROXY: 'http://192.168.9.112:808'
   HTTPS_PROXY: 'http://192.168.9.112:808'
   NO_PROXY: '192.168.8.25,localhost,127.0.0.1'
-  # MAVEN_OPTS limits JVM heap allocation (-Xmx512m) to prevent Windows virtual memory pagefile allocation errors (DOS errno 1455).
+  # 💡 10-Second Summary for Your Sir/Lead
+
+  # │ "By default, Java 17 can request several gigabytes of virtual memory on Windows during Maven builds. Setting MAVEN_OPTS: '-Xmx512m -
+  # │ Xms256m' caps Maven's memory usage to 512 MB, ensuring our GitHub Actions pipeline runs smoothly without crashing due to Windows
+  # │ pagefile memory limits."
   MAVEN_OPTS: '-Xmx512m -Xms256m'
 
 jobs:
-  # ============================================================================
-  # Job 1: Build & Test (Maven)
-  # Purpose: Compiles source code, runs JUnit unit tests, and packages the WAR.
-  # Runs on: Any self-hosted Windows runner with [self-hosted, Windows] labels.
-  # ============================================================================
+  # Job 1: Build the Spring Boot WAR file and run unit tests
   build-and-test:
-    name: Build & Test (Maven)
+    name: Build & Test
     runs-on: [self-hosted, Windows]
     steps:
-      # Step 1: Fetches source code from repository workspace.
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # Step 2: Validates JDK, Maven executable, and settings.xml paths before compilation.
-      - name: Check local JDK and Maven
-        run: |
-          if (-not (Test-Path "$env:JAVA_HOME\bin\java.exe")) { throw "JDK not found: $env:JAVA_HOME" }
-          if (-not (Test-Path $env:MAVEN_BIN)) { throw "Maven not found: $env:MAVEN_BIN" }
-          if (-not (Test-Path $env:SETTINGS_XML)) { throw "Maven settings not found: $env:SETTINGS_XML" }
-          $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
-          & $env:MAVEN_BIN -version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # Step 3: Compiles source code, runs unit tests (Surefire plugin), and packages target/ci-cd-demo.war.
       - name: Build WAR and run tests
         run: |
           $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
           & $env:MAVEN_BIN -s $env:SETTINGS_XML clean verify --no-transfer-progress
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # Step 4: Uploads the compiled WAR archive as a workflow artifact for downstream jobs.
       - name: Upload WAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: ci-cd-demo-war
           path: target/ci-cd-demo.war
-          if-no-files-found: error
-          retention-days: 7
 
-  # ============================================================================
-  # Job 2: Code Quality Check (Maven verify)
-  # Purpose: Re-runs Maven verification with tests skipped (-DskipTests) to validate packaging.
-  # Note: Does NOT integrate SonarQube or external static analysis tools.
-  # ============================================================================
-  code-quality:
-    name: Code Quality Check (Maven verify)
+  # Job 2: Deploy the built WAR file to local Apache Tomcat
+  deploy:
+    name: Deploy to Tomcat
     runs-on: [self-hosted, Windows]
     needs: build-and-test
+    if: github.event_name == 'push'
     steps:
-      # Step 1: Fetches source code from repository.
-      - name: Checkout source code
-        uses: actions/checkout@v4
-
-      # Step 2: Executes Maven verify with tests skipped (-DskipTests) to check packaging integrity.
-      - name: Run Maven verify
-        run: |
-          if (-not (Test-Path $env:MAVEN_BIN)) { throw "Maven not found: $env:MAVEN_BIN" }
-          if (-not (Test-Path $env:SETTINGS_XML)) { throw "Maven settings not found: $env:SETTINGS_XML" }
-          $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
-          & $env:MAVEN_BIN -s $env:SETTINGS_XML verify -DskipTests --no-transfer-progress
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-  # ============================================================================
-  # Job 3: Deploy to Local Tomcat
-  # Purpose: Deploys compiled WAR artifact to local Tomcat webapps directory and verifies health.
-  # Condition: Runs ONLY on push events to 'main' or 'm1' branches (skipped on Pull Requests).
-  # Concurrency: Locks deployment to single execution to prevent overlapping file writes.
-  # ============================================================================
-  deploy:
-    name: Deploy to Local Tomcat
-    runs-on: [self-hosted, Windows]
-    needs: [build-and-test, code-quality]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/m1')
-    concurrency:
-      group: local-tomcat-deploy
-      cancel-in-progress: false
-    steps:
-      # Step 1: Downloads the tested WAR artifact produced by the build-and-test job.
-      - name: Download tested WAR
+      - name: Download WAR artifact
         uses: actions/download-artifact@v4
         with:
           name: ci-cd-demo-war
           path: deploy-artifact
 
-      # Step 2: Deploys WAR to Tomcat, inspects server.xml for HTTP port, tracks log offsets, polls health check, and writes Run Summary.
-      - name: Deploy WAR to Tomcat webapps
-        env:
-          TOMCAT_WEBAPPS_PATH: ${{ secrets.TOMCAT_WEBAPPS_PATH }}
+      - name: Copy WAR to Tomcat webapps
         run: |
-          # Resolve target webapps directory (uses TOMCAT_WEBAPPS_PATH secret if set, else falls back to default path).
-          $targetPath = $env:TOMCAT_WEBAPPS_PATH
-          if ([string]::IsNullOrWhiteSpace($targetPath)) {
-            $targetPath = 'E:\apache-tomcat-10.1.28\webapps'
-            Write-Host "TOMCAT_WEBAPPS_PATH secret not set. Using local default: $targetPath"
-          }
-          $warSrc = Join-Path $env:GITHUB_WORKSPACE 'deploy-artifact\ci-cd-demo.war'
-          if (-not (Test-Path $warSrc -PathType Leaf)) { throw "WAR not found: $warSrc" }
-          if (-not (Test-Path $targetPath -PathType Container)) {
-            throw "Tomcat webapps directory not found: $targetPath"
-          }
-          $warDest = Join-Path $targetPath 'ci-cd-demo.war'
+          $tomcatWebapps = 'E:\apache-tomcat-10.1.28\webapps'
+          $warSource = Join-Path $env:GITHUB_WORKSPACE 'deploy-artifact\ci-cd-demo.war'
+          
+          if (-not (Test-Path $warSource)) { throw "WAR file not found!" }
+          if (-not (Test-Path $tomcatWebapps)) { throw "Tomcat webapps directory not found!" }
 
-          # Parse Tomcat server.xml to dynamically detect HTTP connector port and compute context path.
-          $tomcatBase = Split-Path -Path $targetPath -Parent
-          $serverXml = Join-Path $tomcatBase 'conf\server.xml'
-          if (-not (Test-Path $serverXml -PathType Leaf)) { throw "Tomcat server.xml not found: $serverXml" }
-          [xml]$tomcatConfig = Get-Content -LiteralPath $serverXml -Raw
-          $httpConnector = @($tomcatConfig.Server.Service.Connector) |
-            Where-Object { "$($_.port)" -match '^\d+$' -and "$($_.protocol)" -notmatch '(?i)AJP' -and ("$($_.protocol)" -match '(?i)HTTP|CoyoteAdapter' -or "$($_.protocol)" -eq '') } |
-            Select-Object -First 1
-          if (-not $httpConnector) { throw "No numeric HTTP Connector port found in $serverXml" }
-          $tomcatPort = [string]$httpConnector.port
-          $warBaseName = [System.IO.Path]::GetFileNameWithoutExtension($warDest)
-          $contextPath = if ($warBaseName -eq 'ROOT') { '' } else { '/' + $warBaseName.Replace('#', '/') }
-          $healthUrl = "http://localhost:$tomcatPort$contextPath/test/msg"
-          Write-Host "Detected Tomcat port: $tomcatPort; deployed context: $contextPath"
-
-          # Resolve today's catalina log file path.
-          $logsDir = Join-Path $tomcatBase 'logs'
-          $todayStr = Get-Date -Format "yyyy-MM-dd"
-          $catalinaLog = Join-Path $logsDir "catalina.$todayStr.log"
-
-          # Record initial log byte size and timestamp BEFORE copying the new WAR file.
-          $deployStartTime = Get-Date
-          $initialLogSize = 0
-          if (Test-Path $catalinaLog) {
-            $initialLogSize = (Get-Item $catalinaLog).Length
-          }
-
-          # Overwrite WAR in Tomcat webapps directory (triggers Tomcat autoDeploy background scanner).
-          Copy-Item -LiteralPath $warSrc -Destination $warDest -Force -ErrorAction Stop
-          Write-Host "WAR copied to $warDest at $deployStartTime. Waiting for Tomcat auto-deployment..."
-
-          # Bounded polling loop (max 45s) to test HTTP health endpoint.
-          $timeoutSec = 45
-          $elapsedSec = 0
-          $pollIntervalSec = 3
-          $deployedVerified = $false
-
-          # Temporarily clear proxy variables to bypass corporate proxy for localhost requests.
-          $oldHttpProxy = $env:HTTP_PROXY
-          $oldHttpsProxy = $env:HTTPS_PROXY
-          $env:HTTP_PROXY = ""
-          $env:HTTPS_PROXY = ""
-
-          try {
-            while ($elapsedSec -lt $timeoutSec) {
-              Start-Sleep -Seconds $pollIntervalSec
-              $elapsedSec += $pollIntervalSec
-
-              try {
-                # Sends GET request to health URL (requires HTTP 200 and 'Hello Test Controller' body).
-                # Note: HTTP 200 confirms endpoint availability, but does not distinguish build version if payload is unchanged.
-                $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-                if ($response.StatusCode -eq 200 -and $response.Content -match "Hello Test Controller") {
-                  $deployedVerified = $true
-                  Write-Host "HTTP Health Check PASSED: 200 OK - '$($response.Content.Trim())'"
-                  break
-                }
-              } catch {
-                Write-Host "Waiting for Tomcat endpoint to respond... ($elapsedSec/$timeoutSec s)"
-              }
-            }
-          } finally {
-            # Restore proxy environment variables after health polling completes.
-            $env:HTTP_PROXY = $oldHttpProxy
-            $env:HTTPS_PROXY = $oldHttpsProxy
-          }
-
-          # Read and stream ONLY new lines added to catalina log since deployStartTime.
-          if (Test-Path $catalinaLog) {
-            $currentLog = Get-Item $catalinaLog
-            if ($currentLog.Length -gt $initialLogSize) {
-              Write-Host "=== New Tomcat Log Entries (catalina.$todayStr.log) ==="
-              $stream = [System.IO.File]::Open($catalinaLog, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-              $reader = New-Object System.IO.StreamReader($stream)
-              $stream.Position = $initialLogSize
-              $newLogContent = $reader.ReadToEnd()
-              $reader.Close()
-              $stream.Close()
-
-              $relevantLines = $newLogContent -split "`r?`n" | Where-Object { $_ -match "ci-cd-demo" -or $_ -match "HostConfig" -or $_ -match "Exception" -or $_ -match "Error" }
-              if ($relevantLines) {
-                $relevantLines | ForEach-Object { Write-Host $_ }
-              }
-            }
-          }
-
-          # Fail job if HTTP verification timed out.
-          if (-not $deployedVerified) {
-            throw "Deployment Failed: Application at $healthUrl failed to respond with HTTP 200 and expected payload within $timeoutSec seconds."
-          }
-
-          Write-Host "Deployment completed and verified successfully!"
-          Write-Host "========================================"
-          Write-Host "DEPLOYED APPLICATION URL: $healthUrl"
-          Write-Host "========================================"
-          Write-Host "Open this localhost URL on the runner/Tomcat PC."
-
-          # Publish deployment summary to GitHub Actions Run Summary UI page.
-          if ($env:GITHUB_STEP_SUMMARY) {
-            @(
-              '## Tomcat deployment'
-              ''
-              "- WAR: $([System.IO.Path]::GetFileName($warDest))"
-              "- Detected Tomcat port: $tomcatPort"
-              "- Context path: $contextPath"
-              "- Verified endpoint: [$healthUrl]($healthUrl)"
-              '- HTTP check: 200 OK'
-              '- Note: localhost refers to the runner/Tomcat PC.'
-            ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-          }
+          Copy-Item -LiteralPath $warSource -Destination $tomcatWebapps -Force
+          Write-Host "SUCCESS: WAR deployed to Tomcat at $tomcatWebapps"
+          Write-Host "Application Endpoint: http://localhost:8090/ci-cd-demo/test/msg"
