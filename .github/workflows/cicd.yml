@@ -114,40 +114,42 @@ jobs:
         run: |
           $tomcatPort = 8090
           $tomcatBin = 'E:\apache-tomcat-10.1.28\bin'
-          $catalinaBat = Join-Path $tomcatBin 'catalina.bat'
+          $startupBat = Join-Path $tomcatBin 'startup.bat'
 
-          # Check whether Tomcat is already listening on port 8090
-          $listener = Get-NetTCPConnection -LocalPort $tomcatPort -State Listen -ErrorAction SilentlyContinue
+          $listener = Get-NetTCPConnection `
+            -LocalPort $tomcatPort `
+            -State Listen `
+            -ErrorAction SilentlyContinue
 
           if ($null -eq $listener) {
             Write-Host "Tomcat is stopped. Starting Tomcat..."
 
-            if (-not (Test-Path $catalinaBat -PathType Leaf)) {
-              throw "Tomcat catalina.bat not found: $catalinaBat"
+            if (-not (Test-Path $startupBat -PathType Leaf)) {
+              throw "Tomcat startup.bat not found: $startupBat"
             }
 
-            # Start Tomcat without GitHub Actions process tracking.
-            # This prevents the runner from killing Tomcat during job cleanup.
+            # Start Tomcat in a separate command process.
+            # Clear runner tracking only for the new process.
             $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-            $startInfo.FileName = $catalinaBat
-            $startInfo.Arguments = 'run'
+            $startInfo.FileName = 'cmd.exe'
+            $startInfo.Arguments = "/c start `"`" /b `"$startupBat`""
             $startInfo.WorkingDirectory = $tomcatBin
             $startInfo.UseShellExecute = $false
             $startInfo.CreateNoWindow = $true
             $startInfo.EnvironmentVariables.Remove('RUNNER_TRACKING_ID')
 
-            $tomcatProcess = [System.Diagnostics.Process]::Start($startInfo)
+            [System.Diagnostics.Process]::Start($startInfo)
 
-            if ($null -eq $tomcatProcess) {
-              throw "Tomcat process could not be started."
-            }
-
-            # Wait up to 45 seconds until Tomcat is ready on port 8090
+            # Wait up to 45 seconds for Tomcat to listen on 8090.
             $deadline = (Get-Date).AddSeconds(45)
 
             do {
               Start-Sleep -Seconds 2
-              $listener = Get-NetTCPConnection -LocalPort $tomcatPort -State Listen -ErrorAction SilentlyContinue
+
+              $listener = Get-NetTCPConnection `
+                -LocalPort $tomcatPort `
+                -State Listen `
+                -ErrorAction SilentlyContinue
             }
             while ($null -eq $listener -and (Get-Date) -lt $deadline)
 
@@ -155,7 +157,7 @@ jobs:
               throw "Tomcat did not start on port $tomcatPort within 45 seconds."
             }
 
-            Write-Host "Tomcat started successfully on port $tomcatPort."
+            Write-Host "Tomcat started successfully and is listening on port $tomcatPort."
           }
           else {
             Write-Host "Tomcat is already running on port $tomcatPort."
