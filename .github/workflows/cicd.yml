@@ -12,7 +12,7 @@ name: CI/CD Pipeline - complete-ci-cd-v1
 on:
   # Triggers automatically when code is pushed to 'main' or 'm1' branches
   push:
-    branches: [main, m1]
+    branches: [main, m1, nexus]
 
   # Triggers automatically when a Pull Request is opened/updated targeting 'main'
   pull_request:
@@ -77,7 +77,7 @@ jobs:
           $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 
           # Execute Maven clean verify to run tests and package ci-cd-demo.war
-          & $env:MAVEN_BIN -s $env:SETTINGS_XML clean verify --no-transfer-progress
+          & $env:MAVEN_BIN -s $env:SETTINGS_XML clean deploy --no-transfer-progress
 
           # Fail step immediately if Maven returns an error code
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
