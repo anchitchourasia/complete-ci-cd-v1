@@ -10,7 +10,7 @@ public class MainTestController {
 	
 	@GetMapping("/msg")
 	public String getMessage() {
-		return "Hello Anchit";
+		return "Hello Anchit , Test02";
 	}
 
 }

@@ -11,7 +11,7 @@ name: CI/CD Pipeline - complete-ci-cd-v1
 on:
   # Triggers automatically when code is pushed to 'main' or 'm1' branches
   push:
-    branches: [main, m1]
+   branches: [main, m1]
   # Triggers automatically when a Pull Request is opened/updated targeting 'main'
   pull_request:
     branches: [main]
