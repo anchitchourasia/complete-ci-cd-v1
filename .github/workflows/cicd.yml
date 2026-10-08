@@ -1,9 +1,8 @@
 # ==============================================================================
 # GitHub Actions CI/CD Pipeline - complete-ci-cd-v1
 # Purpose: Automatically builds Java 17 Spring Boot WAR application, runs tests,
-#          starts local Apache Tomcat 10.1 if needed, and deploys the WAR on push.
+#          and deploys the WAR to local Apache Tomcat 10.1 on push.
 # ==============================================================================
-
 name: CI/CD Pipeline - complete-ci-cd-v1
 
 # ------------------------------------------------------------------------------
@@ -12,8 +11,7 @@ name: CI/CD Pipeline - complete-ci-cd-v1
 on:
   # Triggers automatically when code is pushed to 'main' or 'm1' branches
   push:
-    branches: [main, m1]
-
+   branches: [main, m1]
   # Triggers automatically when a Pull Request is opened/updated targeting 'main'
   pull_request:
     branches: [main]
@@ -23,7 +21,7 @@ on:
 # ------------------------------------------------------------------------------
 defaults:
   run:
-    shell: powershell
+    shell: powershell # Executes all inline PowerShell script commands on Windows host
 
 # ------------------------------------------------------------------------------
 # 3. Global Environment Variables
@@ -31,21 +29,22 @@ defaults:
 env:
   # Absolute path to the Maven command-line tool script on the Windows runner PC
   MAVEN_BIN: 'C:\maven\apache-maven-3.9.12\59fe215c0ad6947fea90184bf7add084544567b927287592651fda3782e0e798\bin\mvn.cmd'
-
+  
   # Absolute path to Maven settings XML file containing repository mirror configurations
   SETTINGS_XML: 'C:\maven\settings.xml'
-
+  
   # Path to Java 17 JDK installation directory
   JAVA_HOME: 'C:\Program Files\Java\jdk-17'
-
+  
   # Corporate proxy settings for outbound internet HTTP/HTTPS requests
   HTTP_PROXY: 'http://192.168.9.112:808'
   HTTPS_PROXY: 'http://192.168.9.112:808'
-
-  # Local addresses that bypass the corporate proxy
+  
+  # Local addresses that bypass the corporate proxy (localhost, 127.0.0.1)
   NO_PROXY: '192.168.8.25,localhost,127.0.0.1'
-
-  # JVM memory settings for Maven
+  
+  # JVM Heap Memory Limit (-Xms256m starting memory, -Xmx512m maximum memory)
+  # Prevents Windows pagefile virtual memory errors (errno 1455) during Maven builds
   MAVEN_OPTS: '-Xmx512m -Xms256m'
 
 # ------------------------------------------------------------------------------
@@ -54,31 +53,30 @@ env:
 jobs:
   # ============================================================================
   # JOB 1: Build & Test (Runs on Push and Pull Request)
+  # Purpose: Clones code, compiles Java 17, runs JUnit tests, packages target/ci-cd-demo.war,
+  #          and uploads the WAR file as a GitHub Actions workflow artifact.
   # ============================================================================
   build-and-test:
     name: Build & Test
-    runs-on: [self-hosted, Windows]
-
+    runs-on: [self-hosted, Windows] # Runs on self-hosted Windows runner daemon
     steps:
-      # Step 1: Downloads repository code into the runner workspace
+      # Step 1: Downloads (clones) repository code into the runner workspace folder
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # Step 2: Compiles Java 17 code, runs JUnit tests, and packages the WAR
+      # Step 2: Compiles Java 17 code, executes JUnit unit tests, and packages WAR
       - name: Build WAR and run tests
         run: |
-          # Add Java 17 bin directory to PATH
+          # Add Java 17 bin directory to environment PATH variable
           $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
-
-          # Execute Maven build, test, and package
+          
+          # Execute Maven clean verify to run tests and package ci-cd-demo.war
           & $env:MAVEN_BIN -s $env:SETTINGS_XML clean verify --no-transfer-progress
+          
+          # Fail step immediately if Maven returns an error code
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          # Mark workflow as failed if Maven fails
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-
-      # Step 3: Uploads the built WAR for the deploy job
+      # Step 3: Uploads target/ci-cd-demo.war as an artifact for Job 2 (deploy)
       - name: Upload WAR artifact
         uses: actions/upload-artifact@v4
         with:
@@ -86,90 +84,38 @@ jobs:
           path: target/ci-cd-demo.war
 
   # ============================================================================
-  # JOB 2: Deploy to Tomcat (Runs only on Push)
+  # JOB 2: Deploy to Tomcat (Runs ONLY on Push events)
+  # Purpose: Downloads the tested WAR artifact and copies it to local Tomcat webapps folder.
   # ============================================================================
   deploy:
     name: Deploy to Tomcat
     runs-on: [self-hosted, Windows]
-    needs: build-and-test
-    if: github.event_name == 'push'
-
+    needs: build-and-test        # Waits for Job 1 (build-and-test) to succeed first
+    if: github.event_name == 'push' # Runs only on code push (skips deployment on Pull Requests)
     steps:
-      # Step 1: Downloads the tested WAR from GitHub Actions artifact storage
+      # Step 1: Downloads the tested WAR artifact built in Job 1 into ./deploy-artifact/
       - name: Download WAR artifact
         uses: actions/download-artifact@v4
         with:
           name: ci-cd-demo-war
           path: deploy-artifact
 
-      # Step 2: Starts Tomcat only if port 8090 is not already listening
-      - name: Start Tomcat if it is not running
-        run: |
-          $tomcatPort = 8090
-          $tomcatBin = 'E:\apache-tomcat-10.1.28\bin'
-          $startupBat = Join-Path $tomcatBin 'startup.bat'
-
-          # Check whether an application is listening on port 8090
-          $listener = Get-NetTCPConnection `
-            -LocalPort $tomcatPort `
-            -State Listen `
-            -ErrorAction SilentlyContinue
-
-          if ($null -eq $listener) {
-            Write-Host "Tomcat is stopped. Starting Tomcat..."
-
-            if (-not (Test-Path $startupBat -PathType Leaf)) {
-              throw "Tomcat startup.bat not found: $startupBat"
-            }
-
-            # Starts startup.bat without blocking the GitHub Actions job
-            Start-Process `
-              -FilePath $startupBat `
-              -WorkingDirectory $tomcatBin `
-              -WindowStyle Hidden
-
-            # Wait up to 45 seconds for Tomcat to listen on 8090
-            $deadline = (Get-Date).AddSeconds(45)
-
-            do {
-              Start-Sleep -Seconds 2
-
-              $listener = Get-NetTCPConnection `
-                -LocalPort $tomcatPort `
-                -State Listen `
-                -ErrorAction SilentlyContinue
-            }
-            while ($null -eq $listener -and (Get-Date) -lt $deadline)
-
-            if ($null -eq $listener) {
-              throw "Tomcat did not start on port $tomcatPort within 45 seconds."
-            }
-
-            Write-Host "Tomcat started successfully and is listening on port $tomcatPort."
-          }
-          else {
-            Write-Host "Tomcat is already running on port $tomcatPort."
-          }
-
-      # Step 3: Copies the downloaded WAR into Tomcat's webapps directory
+      # Step 2: Copies ci-cd-demo.war to Tomcat's webapps folder (triggers Tomcat auto-deployment)
       - name: Copy WAR to Tomcat webapps
         run: |
-          # Target directory where Tomcat monitors WAR files
+          # Define local Tomcat webapps target folder
           $tomcatWebapps = 'E:\apache-tomcat-10.1.28\webapps'
-
-          # Exact WAR file downloaded from the successful Build & Test job
+          
+          # Construct absolute path to downloaded WAR artifact
           $warSource = Join-Path $env:GITHUB_WORKSPACE 'deploy-artifact\ci-cd-demo.war'
+          
+          # Validate that both source WAR file and target webapps folder exist
+          if (-not (Test-Path $warSource)) { throw "WAR file not found!" }
+          if (-not (Test-Path $tomcatWebapps)) { throw "Tomcat webapps directory not found!" }
 
-          if (-not (Test-Path $warSource -PathType Leaf)) {
-            throw "WAR file not found: $warSource"
-          }
-
-          if (-not (Test-Path $tomcatWebapps -PathType Container)) {
-            throw "Tomcat webapps directory not found: $tomcatWebapps"
-          }
-
-          # Replaces the existing WAR; Tomcat auto-detects and redeploys it
+          # Copy WAR file to Tomcat webapps (Tomcat automatically unpacks & deploys the app)
           Copy-Item -LiteralPath $warSource -Destination $tomcatWebapps -Force
-
+          
+          # Output deployment success confirmation and live endpoint URL
           Write-Host "SUCCESS: WAR deployed to Tomcat at $tomcatWebapps"
-          Write-Host "Application Endpoint: http://127.0.0.1:8090/ci-cd-demo/test/msg"
+          Write-Host "Application Endpoint: http://localhost:8090/ci-cd-demo/test/msg"
