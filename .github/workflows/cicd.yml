@@ -458,7 +458,7 @@ jobs:
       # Pipeline succeeds only if the running Docker application returns HTTP 200.
       - name: Verify Docker application endpoint
         run: |
-          $url = "http://localhost:$env:DOCKER_HOST_PORT/ci-cd-demo/test/msg"
+          $url = "http://localhost:$env:DOCKER_HOST_PORT/test/msg"
           $deadline = (Get-Date).AddSeconds(45)
 
           Write-Host "Checking Docker endpoint: $url"
