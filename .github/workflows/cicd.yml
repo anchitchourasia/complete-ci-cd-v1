@@ -63,7 +63,12 @@ env:
     # Docker port mapping:
   # Windows PC port 8091 --> Docker/Spring Boot port 9095
   DOCKER_HOST_PORT: "8091"
-  DOCKER_CONTAINER_PORT: "9095"
+  DOCKER_CONTAINER_PORT:
+    "9095"
+
+    # Full path to the Docker Desktop command-line executable.
+  # We use this instead of only "docker" to avoid PATH conflicts.
+  DOCKER_BIN: 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
 
 # ------------------------------------------------------------------------------
 # 4. Pipeline Jobs
@@ -294,17 +299,36 @@ jobs:
       # Context is important because a different context can use a different Docker Engine.
       - name: Check Docker installation and context
         run: |
+          Write-Host "Docker executable path:"
+          Write-Host $env:DOCKER_BIN
+
+          if (-not (Test-Path $env:DOCKER_BIN)) {
+            throw "Docker executable was not found: $env:DOCKER_BIN"
+          }
+
           Write-Host "Docker version:"
-          docker --version
+          & $env:DOCKER_BIN version
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker version command failed."
+          }
 
           Write-Host "Active Docker context:"
-          docker context show
+          & $env:DOCKER_BIN context show
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker context command failed."
+          }
 
           Write-Host "Available Docker contexts:"
-          docker context ls
+          & $env:DOCKER_BIN context ls
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker context list command failed."
+          }
 
           Write-Host "Docker Engine information:"
-          docker info
+          & $env:DOCKER_BIN info
 
           if ($LASTEXITCODE -ne 0) {
             throw "Docker Engine is not available to the GitHub Actions runner."
@@ -331,14 +355,14 @@ jobs:
 
           Write-Host "Building Docker image: $env:DOCKER_IMAGE"
 
-          docker build --progress=plain -t $env:DOCKER_IMAGE .
+          & $env:DOCKER_BIN build --progress=plain -t $env:DOCKER_IMAGE .
 
           if ($LASTEXITCODE -ne 0) {
             throw "Docker image build failed."
           }
 
           # Verify the image truly exists after build.
-          $imageId = docker image inspect `
+          $imageId = & $env:DOCKER_BIN image inspect `
             --format "{{.Id}}" `
             $env:DOCKER_IMAGE 2>$null
 
@@ -349,20 +373,20 @@ jobs:
           Write-Host "SUCCESS: Docker image created."
           Write-Host "Image ID: $imageId"
 
-          docker image ls $env:DOCKER_IMAGE
+          & $env:DOCKER_BIN image ls $env:DOCKER_IMAGE
 
       # An old container with the same name would block docker run.
       # Remove it before deploying the new application version.
       - name: Remove old Docker container
         run: |
-          $existingContainer = docker ps -a `
+          $existingContainer = & $env:DOCKER_BIN ps -a `
             --filter "name=^$env:DOCKER_CONTAINER$" `
             --format "{{.Names}}"
 
           if ($existingContainer -eq $env:DOCKER_CONTAINER) {
             Write-Host "Old Docker container found. Removing it..."
 
-            docker rm --force $env:DOCKER_CONTAINER
+            & $env:DOCKER_BIN rm --force $env:DOCKER_CONTAINER
 
             if ($LASTEXITCODE -ne 0) {
               throw "Old Docker container could not be removed."
@@ -382,7 +406,7 @@ jobs:
         run: |
           Write-Host "Starting Docker container: $env:DOCKER_CONTAINER"
 
-          $containerId = docker run -d `
+          $containerId = & $env:DOCKER_BIN run -d `
             --name $env:DOCKER_CONTAINER `
             -p "$env:DOCKER_HOST_PORT`:$env:DOCKER_CONTAINER_PORT" `
             $env:DOCKER_IMAGE
@@ -403,23 +427,23 @@ jobs:
           Start-Sleep -Seconds 10
 
           Write-Host "Docker container details:"
-          docker ps -a --filter "name=^$env:DOCKER_CONTAINER$"
+          & $env:DOCKER_BIN ps -a --filter "name=^$env:DOCKER_CONTAINER$"
 
-          $containerStatus = docker inspect `
+          $containerStatus = & $env:DOCKER_BIN inspect `
             --format "{{.State.Status}}" `
             $env:DOCKER_CONTAINER 2>$null
 
           if ($containerStatus -ne "running") {
             Write-Host "Container status: $containerStatus"
             Write-Host "Container logs:"
-            docker logs $env:DOCKER_CONTAINER
+            & $env:DOCKER_BIN logs $env:DOCKER_CONTAINER
             throw "Docker container is not running."
           }
 
           Write-Host "SUCCESS: Docker container is running."
 
           Write-Host "Docker port mapping:"
-          docker port $env:DOCKER_CONTAINER
+          & $env:DOCKER_BIN port $env:DOCKER_CONTAINER
 
       # Spring Boot writes its startup output to the container log.
       - name: Show Docker application logs
