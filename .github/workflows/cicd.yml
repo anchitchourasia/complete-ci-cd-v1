@@ -448,7 +448,7 @@ jobs:
       # Spring Boot writes its startup output to the container log.
       - name: Show Docker application logs
         run: |
-          docker logs --tail 100 $env:DOCKER_CONTAINER
+          & $env:DOCKER_BIN logs --tail 100 $env:DOCKER_CONTAINER
 
           if ($LASTEXITCODE -ne 0) {
             throw "Could not read Docker container logs."
