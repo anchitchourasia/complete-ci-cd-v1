@@ -10,7 +10,6 @@
 # ==============================================================================
 name: CI/CD Pipeline - complete-ci-cd-v1
 
-
 # ------------------------------------------------------------------------------
 # 1. Pipeline Event Triggers
 # ------------------------------------------------------------------------------
@@ -23,7 +22,6 @@ on:
   pull_request:
     branches: [main]
 
-
 # ------------------------------------------------------------------------------
 # 2. Default Shell Settings
 # ------------------------------------------------------------------------------
@@ -31,7 +29,6 @@ defaults:
   run:
     # All run commands use PowerShell because the runner is Windows
     shell: powershell
-
 
 # ------------------------------------------------------------------------------
 # 3. Global Environment Variables
@@ -47,32 +44,31 @@ env:
   JAVA_HOME: 'C:\Program Files\Java\jdk-17'
 
   # Corporate proxy configuration for Maven/Docker internet access
-  HTTP_PROXY: 'http://192.168.9.112:808'
-  HTTPS_PROXY: 'http://192.168.9.112:808'
+  HTTP_PROXY: "http://192.168.9.112:808"
+  HTTPS_PROXY: "http://192.168.9.112:808"
 
   # Local addresses that should not use the corporate proxy
-  NO_PROXY: '192.168.8.25,localhost,127.0.0.1'
+  NO_PROXY: "192.168.8.25,localhost,127.0.0.1"
 
   # Maven JVM memory limits
-  MAVEN_OPTS: '-Xmx512m -Xms256m'
+  MAVEN_OPTS: "-Xmx512m -Xms256m"
 
   # Docker image name and tag
-  DOCKER_IMAGE: 'complete-ci-cd-v1:1.0'
+  DOCKER_IMAGE: "complete-ci-cd-v1:1.0"
 
   # Docker container name
-  DOCKER_CONTAINER: 'complete-ci-cd-v1-container'
+  DOCKER_CONTAINER:
+    "complete-ci-cd-v1-container"
 
-  # Docker port mapping:
-  # Windows PC port 8091 --> Docker container port 8090
-  DOCKER_HOST_PORT: '8091'
-  DOCKER_CONTAINER_PORT: '9095'
-
+    # Docker port mapping:
+  # Windows PC port 8091 --> Docker/Spring Boot port 9095
+  DOCKER_HOST_PORT: "8091"
+  DOCKER_CONTAINER_PORT: "9095"
 
 # ------------------------------------------------------------------------------
 # 4. Pipeline Jobs
 # ------------------------------------------------------------------------------
 jobs:
-
   # ============================================================================
   # JOB 1: Build, Test, and Publish WAR
   # Purpose:
@@ -115,7 +111,6 @@ jobs:
         with:
           name: ci-cd-demo-war
           path: target/ci-cd-demo.war
-
 
   # ============================================================================
   # JOB 2: Deploy WAR to Local Tomcat
@@ -235,164 +230,239 @@ jobs:
           Write-Host "SUCCESS: WAR deployed to Tomcat."
           Write-Host "Tomcat endpoint: http://localhost:8090/ci-cd-demo/test/msg"
 
-
-  # ============================================================================
+    # ============================================================================
   # JOB 3: Build and Run Docker Container
   # Purpose:
-  # - Checkout Dockerfile.
   # - Download the exact tested WAR from Job 1.
-  # - Place WAR in target/ because Dockerfile expects target/ci-cd-demo.war.
-  # - Build Docker image.
-  # - Remove old Docker container if it exists.
-  # - Start a new Docker container.
+  # - Build a Docker image using Dockerfile.
+  # - Remove old Docker container.
+  # - Start the new Docker container.
+  # - Verify image, container status, logs, port mapping, and HTTP endpoint.
   #
   # Result:
-  # Windows port 8091 --> Docker container port 8090
+  # Windows port 8091 --> Docker container/Spring Boot port 9095
   # http://localhost:8091/ci-cd-demo/test/msg
   # ============================================================================
   docker-deploy:
     name: Build and Run Docker
     runs-on: [self-hosted, Windows]
 
-    # Docker job waits for:
-    # 1. Maven build/test/Nexus publishing.
-    # 2. Local Tomcat deployment.
+    # Run after Maven build/Nexus publishing and local Tomcat deployment succeed
     needs:
       - build-and-test
       - deploy
 
-    # Do not run Docker deployment for Pull Requests
+    # Do not deploy Docker for Pull Requests
     if: github.event_name == 'push'
 
     steps:
-      # Step 1: Download repository files, especially Dockerfile
+      # Each job has a separate workspace.
+      # Checkout gives this job access to Dockerfile.
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # Step 2: Download the exact WAR that was already compiled and tested
+      # Download the exact WAR created and tested by build-and-test.
       - name: Download WAR artifact
         uses: actions/download-artifact@v4
         with:
           name: ci-cd-demo-war
           path: docker-artifact
 
-      # Step 3: Put the downloaded WAR into target/ for Dockerfile COPY command
+      # Dockerfile requires target/ci-cd-demo.war.
+      # Artifact was downloaded to docker-artifact/ci-cd-demo.war.
+      # Copy it to target/ before docker build.
       - name: Prepare WAR for Docker build
         run: |
-          # Dockerfile expects this folder:
-          # target/ci-cd-demo.war
           $targetFolder = Join-Path $env:GITHUB_WORKSPACE 'target'
-
-          # GitHub Actions artifact download location:
-          # docker-artifact/ci-cd-demo.war
           $warSource = Join-Path $env:GITHUB_WORKSPACE 'docker-artifact\ci-cd-demo.war'
-
-          # Destination required by Dockerfile:
-          # target/ci-cd-demo.war
           $warDestination = Join-Path $targetFolder 'ci-cd-demo.war'
 
-          # Stop clearly if artifact is missing
           if (-not (Test-Path $warSource)) {
             throw "Downloaded WAR artifact was not found: $warSource"
           }
 
-          # Create target folder if it does not exist
           New-Item -ItemType Directory -Path $targetFolder -Force | Out-Null
-
-          # Copy exact tested WAR to Docker build location
           Copy-Item -LiteralPath $warSource -Destination $warDestination -Force
 
-          # Confirm that Dockerfile input file now exists
           if (-not (Test-Path $warDestination)) {
             throw "WAR was not prepared for Docker build: $warDestination"
           }
 
           Write-Host "WAR prepared for Docker build: $warDestination"
 
-      # Step 4: Verify Docker CLI and Docker Engine are available
-      - name: Check Docker installation
+      # Shows Docker CLI version, current Docker context, and Docker Engine details.
+      # Context is important because a different context can use a different Docker Engine.
+      - name: Check Docker installation and context
         run: |
-          # Confirms Docker command-line tool is installed
+          Write-Host "Docker version:"
           docker --version
 
-          # Confirms Docker Engine/Desktop is running
+          Write-Host "Active Docker context:"
+          docker context show
+
+          Write-Host "Available Docker contexts:"
+          docker context ls
+
+          Write-Host "Docker Engine information:"
           docker info
 
           if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+            throw "Docker Engine is not available to the GitHub Actions runner."
           }
 
-      # Step 5: Build Docker image from Dockerfile and target/ci-cd-demo.war
+      # Build Docker image from Dockerfile.
+      # --progress=plain ensures build details appear in GitHub Actions logs.
       - name: Build Docker image
         run: |
-          # -t means tag image with a readable name and version
-          # . means current workspace is the Docker build context
-          docker build -t $env:DOCKER_IMAGE .
+          $dockerfilePath = Join-Path $env:GITHUB_WORKSPACE 'Dockerfile'
+          $warPath = Join-Path $env:GITHUB_WORKSPACE 'target\ci-cd-demo.war'
 
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+          Write-Host "Workspace: $env:GITHUB_WORKSPACE"
+          Write-Host "Dockerfile: $dockerfilePath"
+          Write-Host "WAR file: $warPath"
+
+          if (-not (Test-Path $dockerfilePath)) {
+            throw "Dockerfile not found: $dockerfilePath"
           }
 
-      # Step 6: Remove previous container before creating a new one
+          if (-not (Test-Path $warPath)) {
+            throw "WAR file not found for Docker build: $warPath"
+          }
+
+          Write-Host "Building Docker image: $env:DOCKER_IMAGE"
+
+          docker build --progress=plain -t $env:DOCKER_IMAGE .
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker image build failed."
+          }
+
+          # Verify the image truly exists after build.
+          $imageId = docker image inspect `
+            --format "{{.Id}}" `
+            $env:DOCKER_IMAGE 2>$null
+
+          if ([string]::IsNullOrWhiteSpace($imageId)) {
+            throw "Docker image not found after build: $env:DOCKER_IMAGE"
+          }
+
+          Write-Host "SUCCESS: Docker image created."
+          Write-Host "Image ID: $imageId"
+
+          docker image ls $env:DOCKER_IMAGE
+
+      # An old container with the same name would block docker run.
+      # Remove it before deploying the new application version.
       - name: Remove old Docker container
         run: |
-          # docker ps -a lists both running and stopped containers.
-          # Exact-name filter avoids accidentally matching another container.
           $existingContainer = docker ps -a `
             --filter "name=^$env:DOCKER_CONTAINER$" `
             --format "{{.Names}}"
 
-          # Remove only if the expected old container exists
           if ($existingContainer -eq $env:DOCKER_CONTAINER) {
             Write-Host "Old Docker container found. Removing it..."
 
-            # --force stops a running container and removes it
             docker rm --force $env:DOCKER_CONTAINER
 
             if ($LASTEXITCODE -ne 0) {
-              exit $LASTEXITCODE
+              throw "Old Docker container could not be removed."
             }
           }
           else {
             Write-Host "No old Docker container found."
           }
 
-      # Step 7: Start the new container
+      # Create and start the application container.
+      #
+      # -d                         = detached/background mode
+      # --name                     = stable container name
+      # -p 8091:9095               = Windows port 8091 --> container port 9095
+      # complete-ci-cd-v1:1.0      = image name and tag
       - name: Run Docker container
         run: |
-          # -d means detached mode: run container in background.
-          # --name gives the container a stable readable name.
-          # -p 8091:8090 means:
-          # Windows host port 8091 --> Docker container port 8090.
-          docker run -d `
+          Write-Host "Starting Docker container: $env:DOCKER_CONTAINER"
+
+          $containerId = docker run -d `
             --name $env:DOCKER_CONTAINER `
             -p "$env:DOCKER_HOST_PORT`:$env:DOCKER_CONTAINER_PORT" `
             $env:DOCKER_IMAGE
 
           if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+            throw "Docker container could not be started."
           }
 
-      # Step 8: Confirm container is running and show port mapping
+          if ([string]::IsNullOrWhiteSpace($containerId)) {
+            throw "Docker did not return a container ID."
+          }
+
+          Write-Host "Container ID: $containerId"
+
+      # Wait briefly for Java/Spring Boot startup, then confirm container state.
       - name: Check Docker container status
         run: |
-          docker ps --filter "name=^$env:DOCKER_CONTAINER$"
-
-      # Step 9: Wait briefly, then print Spring Boot startup logs
-      - name: Show Docker application logs
-        run: |
-          # Allows the Java process time to start inside container
           Start-Sleep -Seconds 10
 
-          # --tail 100 shows last 100 log lines
+          Write-Host "Docker container details:"
+          docker ps -a --filter "name=^$env:DOCKER_CONTAINER$"
+
+          $containerStatus = docker inspect `
+            --format "{{.State.Status}}" `
+            $env:DOCKER_CONTAINER 2>$null
+
+          if ($containerStatus -ne "running") {
+            Write-Host "Container status: $containerStatus"
+            Write-Host "Container logs:"
+            docker logs $env:DOCKER_CONTAINER
+            throw "Docker container is not running."
+          }
+
+          Write-Host "SUCCESS: Docker container is running."
+
+          Write-Host "Docker port mapping:"
+          docker port $env:DOCKER_CONTAINER
+
+      # Spring Boot writes its startup output to the container log.
+      - name: Show Docker application logs
+        run: |
           docker logs --tail 100 $env:DOCKER_CONTAINER
 
           if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+            throw "Could not read Docker container logs."
           }
 
-      # Step 10: Print endpoint for verification
-      - name: Display Docker endpoint
+      # This is the final truth check.
+      # Pipeline succeeds only if the running Docker application returns HTTP 200.
+      - name: Verify Docker application endpoint
         run: |
-          Write-Host "SUCCESS: Docker container is running."
-          Write-Host "Docker endpoint: http://localhost:8091/ci-cd-demo/test/msg"
+          $url = "http://localhost:$env:DOCKER_HOST_PORT/ci-cd-demo/test/msg"
+          $deadline = (Get-Date).AddSeconds(45)
+
+          Write-Host "Checking Docker endpoint: $url"
+
+          do {
+            try {
+              $response = Invoke-WebRequest `
+                -Uri $url `
+                -UseBasicParsing `
+                -TimeoutSec 5
+
+              if ($response.StatusCode -eq 200) {
+                Write-Host "SUCCESS: Docker application responded with HTTP 200."
+                exit 0
+              }
+            }
+            catch {
+              Write-Host "Application is not ready yet. Waiting..."
+            }
+
+            Start-Sleep -Seconds 3
+          }
+          while ((Get-Date) -lt $deadline)
+
+          Write-Host "Docker containers after endpoint failure:"
+          docker ps -a
+
+          Write-Host "Docker application logs after endpoint failure:"
+          docker logs $env:DOCKER_CONTAINER
+
+          throw "Docker application did not respond at $url within 45 seconds."
