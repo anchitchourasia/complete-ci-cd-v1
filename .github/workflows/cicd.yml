@@ -1,20 +1,25 @@
 # ==============================================================================
 # GitHub Actions CI/CD Pipeline - complete-ci-cd-v1
-# Purpose: Automatically builds Java 17 Spring Boot WAR application, runs tests,
-#          starts Tomcat if needed, and deploys the WAR to local Apache Tomcat 10.1 on push.
+# Purpose:
+# 1. Build Java 17 Spring Boot WAR application.
+# 2. Run JUnit tests.
+# 3. Upload the tested WAR to Nexus Maven repository.
+# 4. Deploy the tested WAR to local Apache Tomcat.
+# 5. Build a Docker image using the same tested WAR.
+# 6. Run the application in a Docker container.
 # ==============================================================================
 name: CI/CD Pipeline - complete-ci-cd-v1
 
 
 # ------------------------------------------------------------------------------
-# 1. Pipeline Event Triggers (When does this workflow run?)
+# 1. Pipeline Event Triggers
 # ------------------------------------------------------------------------------
 on:
-  # Triggers automatically when code is pushed to 'main' or 'm1' branches
+  # Run workflow when code is pushed to these branches
   push:
-    branches: [main, m1, nexus]
+    branches: [main, m1, nexus, docker]
 
-  # Triggers automatically when a Pull Request is opened/updated targeting 'main'
+  # Run build and test when Pull Request targets main
   pull_request:
     branches: [main]
 
@@ -24,65 +29,87 @@ on:
 # ------------------------------------------------------------------------------
 defaults:
   run:
-    shell: powershell # Executes all inline PowerShell script commands on Windows host
+    # All run commands use PowerShell because the runner is Windows
+    shell: powershell
 
 
 # ------------------------------------------------------------------------------
 # 3. Global Environment Variables
 # ------------------------------------------------------------------------------
 env:
-  # Absolute path to the Maven command-line tool script on the Windows runner PC
+  # Maven command path on the self-hosted Windows runner
   MAVEN_BIN: 'C:\maven\apache-maven-3.9.12\59fe215c0ad6947fea90184bf7add084544567b927287592651fda3782e0e798\bin\mvn.cmd'
 
-  # Absolute path to Maven settings XML file containing repository mirror configurations
+  # Maven settings file containing Nexus credentials and proxy configuration
   SETTINGS_XML: 'C:\maven\settings.xml'
 
-  # Path to Java 17 JDK installation directory
+  # Java 17 installation path on the self-hosted Windows runner
   JAVA_HOME: 'C:\Program Files\Java\jdk-17'
 
-  # Corporate proxy settings for outbound internet HTTP/HTTPS requests
+  # Corporate proxy configuration for Maven/Docker internet access
   HTTP_PROXY: 'http://192.168.9.112:808'
   HTTPS_PROXY: 'http://192.168.9.112:808'
 
-  # Local addresses that bypass the corporate proxy (localhost, 127.0.0.1)
+  # Local addresses that should not use the corporate proxy
   NO_PROXY: '192.168.8.25,localhost,127.0.0.1'
 
-  # JVM Heap Memory Limit (-Xms256m starting memory, -Xmx512m maximum memory)
-  # Prevents Windows pagefile virtual memory errors (errno 1455) during Maven builds
+  # Maven JVM memory limits
   MAVEN_OPTS: '-Xmx512m -Xms256m'
+
+  # Docker image name and tag
+  DOCKER_IMAGE: 'complete-ci-cd-v1:1.0'
+
+  # Docker container name
+  DOCKER_CONTAINER: 'complete-ci-cd-v1-container'
+
+  # Docker port mapping:
+  # Windows PC port 8091 --> Docker container port 8090
+  DOCKER_HOST_PORT: '8091'
+  DOCKER_CONTAINER_PORT: '8090'
 
 
 # ------------------------------------------------------------------------------
 # 4. Pipeline Jobs
 # ------------------------------------------------------------------------------
 jobs:
+
   # ============================================================================
-  # JOB 1: Build & Test (Runs on Push and Pull Request)
-  # Purpose: Clones code, compiles Java 17, runs JUnit tests, packages target/ci-cd-demo.war,
-  #          and uploads the WAR file as a GitHub Actions workflow artifact.
+  # JOB 1: Build, Test, and Publish WAR
+  # Purpose:
+  # - Checkout source code.
+  # - Compile Java 17 application.
+  # - Run JUnit tests.
+  # - Create target/ci-cd-demo.war.
+  # - Upload WAR to Nexus Maven snapshots repository.
+  # - Upload the same WAR as a GitHub Actions artifact for later jobs.
   # ============================================================================
   build-and-test:
-    name: Build & Test
-    runs-on: [self-hosted, Windows] # Runs on self-hosted Windows runner daemon
+    name: Build, Test, and Publish WAR
+    runs-on: [self-hosted, Windows]
 
     steps:
-      # Step 1: Downloads (clones) repository code into the runner workspace folder
+      # Step 1: Download repository source code into GitHub runner workspace
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # Step 2: Compiles Java 17 code, executes JUnit unit tests, and packages WAR
-      - name: Build WAR and run tests
+      # Step 2: Build WAR, run tests, and upload Maven artifact to Nexus
+      - name: Build WAR, run tests, and upload to Nexus
         run: |
-          # Add Java 17 bin directory to environment PATH variable
+          # Add Java 17 bin folder to PATH for this PowerShell process
           $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 
-          # Execute Maven clean verify to run tests and package ci-cd-demo.war
+          # Maven lifecycle:
+          # clean  = delete old target folder
+          # deploy = compile, test, package WAR, install locally, upload to Nexus
           & $env:MAVEN_BIN -s $env:SETTINGS_XML clean deploy --no-transfer-progress
 
-          # Fail step immediately if Maven returns an error code
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Fail the GitHub Actions step if Maven reports an error
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
-      # Step 3: Uploads target/ci-cd-demo.war as an artifact for Job 2 (deploy)
+      # Step 3: Save the exact tested WAR as a workflow artifact
+      # This lets Job 2 and Job 3 use the same tested file.
       - name: Upload WAR artifact
         uses: actions/upload-artifact@v4
         with:
@@ -91,56 +118,75 @@ jobs:
 
 
   # ============================================================================
-  # JOB 2: Deploy to Tomcat (Runs ONLY on Push events)
-  # Purpose: Downloads the tested WAR artifact, starts Tomcat if stopped,
-  #          and copies the WAR file to the local Tomcat webapps folder.
+  # JOB 2: Deploy WAR to Local Tomcat
+  # Purpose:
+  # - Download the tested WAR from Job 1.
+  # - Start local Tomcat only if it is stopped.
+  # - Copy WAR to Tomcat webapps folder.
+  #
+  # Result:
+  # http://localhost:8090/ci-cd-demo/test/msg
   # ============================================================================
   deploy:
     name: Deploy to Tomcat
     runs-on: [self-hosted, Windows]
-    needs: build-and-test         # Waits for Job 1 (build-and-test) to succeed first
-    if: github.event_name == 'push' # Runs only on code push (skips deployment on Pull Requests)
+
+    # This job starts only after build-and-test succeeds
+    needs: build-and-test
+
+    # Do not deploy Tomcat for Pull Requests
+    if: github.event_name == 'push'
 
     steps:
-      # Step 1: Downloads the tested WAR artifact built in Job 1 into ./deploy-artifact/
+      # Step 1: Download the exact tested WAR created in Job 1
       - name: Download WAR artifact
         uses: actions/download-artifact@v4
         with:
           name: ci-cd-demo-war
           path: deploy-artifact
 
-      # Step 2: Starts Tomcat automatically only if it is not already listening on port 8090
+      # Step 2: Start Tomcat only if port 8090 has no listener
       - name: Start Tomcat if stopped
         run: |
+          # Tomcat listens on this port on the Windows host
           $tomcatPort = 8090
+
+          # Local Apache Tomcat installation folder
           $tomcatBin = 'E:\apache-tomcat-10.1.28\bin'
+
+          # Tomcat startup batch file
           $startupBat = Join-Path $tomcatBin 'startup.bat'
 
+          # Check whether any process already listens on port 8090
           $listener = Get-NetTCPConnection `
             -LocalPort $tomcatPort `
             -State Listen `
             -ErrorAction SilentlyContinue
 
+          # Start Tomcat only if it is not running
           if ($null -eq $listener) {
             Write-Host "Tomcat is stopped. Starting Tomcat..."
 
+            # Stop with a clear error if startup.bat is missing
             if (-not (Test-Path $startupBat -PathType Leaf)) {
               throw "Tomcat startup.bat not found: $startupBat"
             }
 
-            # Start Tomcat in a separate command process.
-            # Clear runner tracking only for the new process.
+            # Create a background cmd.exe process to start Tomcat
             $startInfo = New-Object System.Diagnostics.ProcessStartInfo
             $startInfo.FileName = 'cmd.exe'
             $startInfo.Arguments = "/c start `"`" /b `"$startupBat`""
             $startInfo.WorkingDirectory = $tomcatBin
             $startInfo.UseShellExecute = $false
             $startInfo.CreateNoWindow = $true
+
+            # Prevent GitHub runner from tracking and killing the Tomcat process
             $startInfo.EnvironmentVariables.Remove('RUNNER_TRACKING_ID')
 
+            # Start the Tomcat process
             [System.Diagnostics.Process]::Start($startInfo)
 
-            # Wait up to 45 seconds for Tomcat to listen on 8090.
+            # Wait up to 45 seconds for Tomcat to listen on port 8090
             $deadline = (Get-Date).AddSeconds(45)
 
             do {
@@ -153,32 +199,200 @@ jobs:
             }
             while ($null -eq $listener -and (Get-Date) -lt $deadline)
 
+            # Fail if Tomcat never started
             if ($null -eq $listener) {
               throw "Tomcat did not start on port $tomcatPort within 45 seconds."
             }
 
-            Write-Host "Tomcat started successfully and is listening on port $tomcatPort."
+            Write-Host "Tomcat started successfully on port $tomcatPort."
           }
           else {
             Write-Host "Tomcat is already running on port $tomcatPort."
           }
 
-      # Step 3: Copies ci-cd-demo.war to Tomcat's webapps folder (triggers Tomcat auto-deployment)
+      # Step 3: Copy WAR into Tomcat webapps folder
       - name: Copy WAR to Tomcat webapps
         run: |
-          # Define local Tomcat webapps target folder
+          # Tomcat auto-deploys WAR files copied into this folder
           $tomcatWebapps = 'E:\apache-tomcat-10.1.28\webapps'
 
-          # Construct absolute path to downloaded WAR artifact
+          # WAR downloaded from GitHub Actions artifact storage
           $warSource = Join-Path $env:GITHUB_WORKSPACE 'deploy-artifact\ci-cd-demo.war'
 
-          # Validate that both source WAR file and target webapps folder exist
-          if (-not (Test-Path $warSource)) { throw "WAR file not found!" }
-          if (-not (Test-Path $tomcatWebapps)) { throw "Tomcat webapps directory not found!" }
+          # Confirm required source file and destination folder exist
+          if (-not (Test-Path $warSource)) {
+            throw "WAR file not found: $warSource"
+          }
 
-          # Copy WAR file to Tomcat webapps (Tomcat automatically unpacks & deploys the app)
+          if (-not (Test-Path $tomcatWebapps)) {
+            throw "Tomcat webapps directory not found: $tomcatWebapps"
+          }
+
+          # Copy tested WAR to Tomcat webapps.
+          # -Force overwrites old ci-cd-demo.war.
           Copy-Item -LiteralPath $warSource -Destination $tomcatWebapps -Force
 
-          # Output deployment success confirmation and live endpoint URL
-          Write-Host "SUCCESS: WAR deployed to Tomcat at $tomcatWebapps"
-          Write-Host "Application Endpoint: http://localhost:8090/ci-cd-demo/test/msg"
+          Write-Host "SUCCESS: WAR deployed to Tomcat."
+          Write-Host "Tomcat endpoint: http://localhost:8090/ci-cd-demo/test/msg"
+
+
+  # ============================================================================
+  # JOB 3: Build and Run Docker Container
+  # Purpose:
+  # - Checkout Dockerfile.
+  # - Download the exact tested WAR from Job 1.
+  # - Place WAR in target/ because Dockerfile expects target/ci-cd-demo.war.
+  # - Build Docker image.
+  # - Remove old Docker container if it exists.
+  # - Start a new Docker container.
+  #
+  # Result:
+  # Windows port 8091 --> Docker container port 8090
+  # http://localhost:8091/ci-cd-demo/test/msg
+  # ============================================================================
+  docker-deploy:
+    name: Build and Run Docker
+    runs-on: [self-hosted, Windows]
+
+    # Docker job waits for:
+    # 1. Maven build/test/Nexus publishing.
+    # 2. Local Tomcat deployment.
+    needs:
+      - build-and-test
+      - deploy
+
+    # Do not run Docker deployment for Pull Requests
+    if: github.event_name == 'push'
+
+    steps:
+      # Step 1: Download repository files, especially Dockerfile
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # Step 2: Download the exact WAR that was already compiled and tested
+      - name: Download WAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-cd-demo-war
+          path: docker-artifact
+
+      # Step 3: Put the downloaded WAR into target/ for Dockerfile COPY command
+      - name: Prepare WAR for Docker build
+        run: |
+          # Dockerfile expects this folder:
+          # target/ci-cd-demo.war
+          $targetFolder = Join-Path $env:GITHUB_WORKSPACE 'target'
+
+          # GitHub Actions artifact download location:
+          # docker-artifact/ci-cd-demo.war
+          $warSource = Join-Path $env:GITHUB_WORKSPACE 'docker-artifact\ci-cd-demo.war'
+
+          # Destination required by Dockerfile:
+          # target/ci-cd-demo.war
+          $warDestination = Join-Path $targetFolder 'ci-cd-demo.war'
+
+          # Stop clearly if artifact is missing
+          if (-not (Test-Path $warSource)) {
+            throw "Downloaded WAR artifact was not found: $warSource"
+          }
+
+          # Create target folder if it does not exist
+          New-Item -ItemType Directory -Path $targetFolder -Force | Out-Null
+
+          # Copy exact tested WAR to Docker build location
+          Copy-Item -LiteralPath $warSource -Destination $warDestination -Force
+
+          # Confirm that Dockerfile input file now exists
+          if (-not (Test-Path $warDestination)) {
+            throw "WAR was not prepared for Docker build: $warDestination"
+          }
+
+          Write-Host "WAR prepared for Docker build: $warDestination"
+
+      # Step 4: Verify Docker CLI and Docker Engine are available
+      - name: Check Docker installation
+        run: |
+          # Confirms Docker command-line tool is installed
+          docker --version
+
+          # Confirms Docker Engine/Desktop is running
+          docker info
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      # Step 5: Build Docker image from Dockerfile and target/ci-cd-demo.war
+      - name: Build Docker image
+        run: |
+          # -t means tag image with a readable name and version
+          # . means current workspace is the Docker build context
+          docker build -t $env:DOCKER_IMAGE .
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      # Step 6: Remove previous container before creating a new one
+      - name: Remove old Docker container
+        run: |
+          # docker ps -a lists both running and stopped containers.
+          # Exact-name filter avoids accidentally matching another container.
+          $existingContainer = docker ps -a `
+            --filter "name=^$env:DOCKER_CONTAINER$" `
+            --format "{{.Names}}"
+
+          # Remove only if the expected old container exists
+          if ($existingContainer -eq $env:DOCKER_CONTAINER) {
+            Write-Host "Old Docker container found. Removing it..."
+
+            # --force stops a running container and removes it
+            docker rm --force $env:DOCKER_CONTAINER
+
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
+          else {
+            Write-Host "No old Docker container found."
+          }
+
+      # Step 7: Start the new container
+      - name: Run Docker container
+        run: |
+          # -d means detached mode: run container in background.
+          # --name gives the container a stable readable name.
+          # -p 8091:8090 means:
+          # Windows host port 8091 --> Docker container port 8090.
+          docker run -d `
+            --name $env:DOCKER_CONTAINER `
+            -p "$env:DOCKER_HOST_PORT`:$env:DOCKER_CONTAINER_PORT" `
+            $env:DOCKER_IMAGE
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      # Step 8: Confirm container is running and show port mapping
+      - name: Check Docker container status
+        run: |
+          docker ps --filter "name=^$env:DOCKER_CONTAINER$"
+
+      # Step 9: Wait briefly, then print Spring Boot startup logs
+      - name: Show Docker application logs
+        run: |
+          # Allows the Java process time to start inside container
+          Start-Sleep -Seconds 10
+
+          # --tail 100 shows last 100 log lines
+          docker logs --tail 100 $env:DOCKER_CONTAINER
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      # Step 10: Print endpoint for verification
+      - name: Display Docker endpoint
+        run: |
+          Write-Host "SUCCESS: Docker container is running."
+          Write-Host "Docker endpoint: http://localhost:8091/ci-cd-demo/test/msg"
