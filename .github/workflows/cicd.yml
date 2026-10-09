@@ -65,7 +65,7 @@ env:
   # Docker port mapping:
   # Windows PC port 8091 --> Docker container port 8090
   DOCKER_HOST_PORT: '8091'
-  DOCKER_CONTAINER_PORT: '8090'
+  DOCKER_CONTAINER_PORT: '9095'
 
 
 # ------------------------------------------------------------------------------
