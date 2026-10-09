@@ -398,7 +398,7 @@ jobs:
 
       # Create and start the application container.
       #
-      # -d                         = detached/background mode
+      # -d                         = detached/background mode 
       # --name                     = stable container name
       # -p 8091:9095               = Windows port 8091 --> container port 9095
       # complete-ci-cd-v1:1.0      = image name and tag
