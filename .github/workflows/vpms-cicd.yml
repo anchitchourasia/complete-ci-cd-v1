@@ -35,6 +35,8 @@ jobs:
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Build VPMS WAR
         working-directory: vehiclePassManagementSystem
