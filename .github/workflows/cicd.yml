@@ -16,7 +16,7 @@ name: CI/CD Pipeline - VPMS
 on:
   # Run workflow when code is pushed to these branches
   push:
-    branches: [main, m1, nexus, docker, backend1]
+    branches: [main, backend1]
 
   # Run build and test when Pull Request targets main
   pull_request:
