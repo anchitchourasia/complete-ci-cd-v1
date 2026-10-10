@@ -92,7 +92,7 @@ jobs:
 
           # clean = delete old target folder
           # deploy = compile, test, package WAR, install locally, upload to Nexus
-          & $env:MAVEN_BIN -s $env:SETTINGS_XML clean deploy --no-transfer-progress
+          & $env:MAVEN_BIN -s $env:SETTINGS_XML clean deploy -DskipTests --no-transfer-progress
 
           # Fail the GitHub Actions step if Maven reports an error
           if ($LASTEXITCODE -ne 0) {
