@@ -16,7 +16,7 @@ name: CI/CD Pipeline - VPMS
 on:
   # Run workflow when code is pushed to these branches
   push:
-    branches: [main, backend1]
+    branches: [main, backend1, b2]
 
   # Run build and test when Pull Request targets main
   pull_request:
@@ -83,6 +83,19 @@ jobs:
       # Step 1: Download repository source code into GitHub runner workspace
       - name: Checkout source code
         uses: actions/checkout@v4
+
+      # Copy local untracked application.properties into runner workspace
+      - name: Copy local application.properties
+        run: |
+          $localProperties = 'E:\vehiclePassManagementSystem\src\main\resources\application.properties'
+          $targetProperties = Join-Path $env:GITHUB_WORKSPACE 'src\main\resources\application.properties'
+
+          if (-not (Test-Path $localProperties)) {
+            throw "Local application.properties not found: $localProperties"
+          }
+
+          Copy-Item -LiteralPath $localProperties -Destination $targetProperties -Force
+          Write-Host "Local application.properties copied into runner workspace."  
 
       # Step 2: Build WAR, run tests, and upload Maven artifact to Nexus
       - name: Build WAR, run tests, and upload to Nexus
@@ -383,6 +396,7 @@ jobs:
           $containerId = & $env:DOCKER_BIN run -d `
             --name $env:DOCKER_CONTAINER `
             -p "$env:DOCKER_HOST_PORT`:$env:DOCKER_CONTAINER_PORT" `
+            -v "E:/vehiclePassManagementSystem/src/main/resources/application.properties:/config/application.properties" `
             $env:DOCKER_IMAGE
 
           if ($LASTEXITCODE -ne 0) {
