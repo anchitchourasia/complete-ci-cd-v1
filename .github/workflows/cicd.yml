@@ -385,6 +385,7 @@ jobs:
             -p "$env:DOCKER_HOST_PORT`:$env:DOCKER_CONTAINER_PORT" `
             -v "E:/vehiclePassManagementSystem/src/main/resources/application.properties:/config/application.properties:ro" `
             $env:DOCKER_IMAGE
+            -e "SPRING_CONFIG_ADDITIONAL_LOCATION=file:/config/application.properties" `
 
           if ($LASTEXITCODE -ne 0) {
             throw "Docker container could not be started."
