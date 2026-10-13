@@ -57,7 +57,7 @@ public class PassRegistryController {
     
     @GetMapping("/test")
     public ResponseEntity<String> test() {
-        return ResponseEntity.ok("Hii VPMS hi anchit");
+        return ResponseEntity.ok("Hii VPMS hi anchit  hiiiiii");
     }
 
     @PostMapping(
