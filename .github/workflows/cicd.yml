@@ -84,19 +84,6 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # Copy local untracked application.properties into runner workspace
-      - name: Copy local application.properties
-        run: |
-          $localProperties = 'E:\vehiclePassManagementSystem\src\main\resources\application.properties'
-          $targetProperties = Join-Path $env:GITHUB_WORKSPACE 'src\main\resources\application.properties'
-
-          if (-not (Test-Path $localProperties)) {
-            throw "Local application.properties not found: $localProperties"
-          }
-
-          Copy-Item -LiteralPath $localProperties -Destination $targetProperties -Force
-          Write-Host "Local application.properties copied into runner workspace."  
-
       # Step 2: Build WAR, run tests, and upload Maven artifact to Nexus
       - name: Build WAR, run tests, and upload to Nexus
         run: |
@@ -396,7 +383,7 @@ jobs:
           $containerId = & $env:DOCKER_BIN run -d `
             --name $env:DOCKER_CONTAINER `
             -p "$env:DOCKER_HOST_PORT`:$env:DOCKER_CONTAINER_PORT" `
-            -v "E:/vehiclePassManagementSystem/src/main/resources/application.properties:/config/application.properties" `
+            -v "E:/vehiclePassManagementSystem/src/main/resources/application.properties:/config/application.properties:ro" `
             $env:DOCKER_IMAGE
 
           if ($LASTEXITCODE -ne 0) {
