@@ -340,7 +340,7 @@ jobs:
           }
 
           # Verify the image truly exists after build.
-          $imageId = & $env:DOCKER_BIN image inspect `
+          $imageId = & $env:DOCKER_BIN image inspect ` 
             --format "{{.Id}}" `
             $env:DOCKER_IMAGE 2>$null
 
