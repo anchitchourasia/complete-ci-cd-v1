@@ -1,0 +1,432 @@
+# ==============================================================================
+# GitHub Actions CI/CD Pipeline - VPMS
+# Purpose:
+# 1. Build Java 17 Spring Boot WAR application.
+# 2. Run JUnit tests.
+# 3. Upload the tested WAR to Nexus Maven repository.
+# 4. Deploy the tested WAR to local Apache Tomcat.
+# 5. Build a Docker image using the same tested WAR.
+# 6. Run the application in a Docker container.
+# ==============================================================================
+name: CI/CD Pipeline - VPMS
+
+# ------------------------------------------------------------------------------
+# 1. Pipeline Event Triggers
+# ------------------------------------------------------------------------------
+on:
+  # Run workflow when code is pushed to these branches
+  push:
+    branches: [main, backend1, b2]
+
+  # Run build and test when Pull Request targets main
+  pull_request:
+    branches: [main]
+
+# ------------------------------------------------------------------------------
+# 2. Default Shell Settings
+# ------------------------------------------------------------------------------
+defaults:
+  run:
+    # All run commands use PowerShell because the runner is Windows
+    shell: powershell
+
+# ------------------------------------------------------------------------------
+# 3. Global Environment Variables
+# ------------------------------------------------------------------------------
+env:
+  # Maven command path on the self-hosted Windows runner
+  MAVEN_BIN: 'C:\maven\apache-maven-3.9.12\59fe215c0ad6947fea90184bf7add084544567b927287592651fda3782e0e798\bin\mvn.cmd'
+
+  # Maven settings file containing Nexus credentials and proxy configuration
+  SETTINGS_XML: 'C:\maven\settings.xml'
+
+  # Java 17 installation path on the self-hosted Windows runner
+  JAVA_HOME: 'C:\Program Files\Java\jdk-17'
+
+  # Corporate proxy configuration for Maven/Docker internet access
+  HTTP_PROXY: "http://192.168.9.112:808"
+  HTTPS_PROXY: "http://192.168.9.112:808"
+
+  # Local addresses that should not use the corporate proxy
+  NO_PROXY: "192.168.8.25,localhost,127.0.0.1"
+
+  # Maven JVM memory limits
+  MAVEN_OPTS: "-Xmx512m -Xms256m"
+
+  # Docker image name and tag
+  DOCKER_IMAGE: "vpms:1.0"
+
+  # Docker container name
+  DOCKER_CONTAINER: "vpms-container"
+
+  # Docker port mapping:
+  # Windows PC port 8092 --> Docker/Spring Boot port 3031
+  DOCKER_HOST_PORT: "8092"
+  DOCKER_CONTAINER_PORT: "3031"
+
+  # Full path to the Docker Desktop command-line executable.
+  # We use this instead of only "docker" to avoid PATH conflicts.
+  DOCKER_BIN: 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
+
+# ------------------------------------------------------------------------------
+# 4. Pipeline Jobs
+# ------------------------------------------------------------------------------
+jobs:
+  # ============================================================================
+  # JOB 1: Build, Test, and Publish WAR
+  # ============================================================================
+  build-and-test:
+    name: Build, Test, and Publish WAR
+    runs-on: [self-hosted, Windows]
+
+    steps:
+      # Step 1: Download repository source code into GitHub runner workspace
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # Step 2: Build WAR, run tests, and upload Maven artifact to Nexus
+      - name: Build WAR, run tests, and upload to Nexus
+        run: |
+          # Add Java 17 bin folder to PATH for this PowerShell process
+          $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
+
+          # clean = delete old target folder
+          # deploy = compile, test, package WAR, install locally, upload to Nexus
+          & $env:MAVEN_BIN -s $env:SETTINGS_XML clean deploy -DskipTests --no-transfer-progress
+
+          # Fail the GitHub Actions step if Maven reports an error
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      # Step 3: Save the exact tested WAR as a workflow artifact
+      - name: Upload WAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpms-war
+          path: target/vpms.war
+
+  # ============================================================================
+  # JOB 2: Deploy WAR to Local Tomcat
+  #
+  # Result:
+  # Tomcat context path is /vpms because the WAR is named vpms.war
+  # ============================================================================
+  deploy:
+    name: Deploy to Tomcat
+    runs-on: [self-hosted, Windows]
+
+    # This job starts only after build-and-test succeeds
+    needs: build-and-test
+
+    # Do not deploy Tomcat for Pull Requests
+    if: github.event_name == 'push'
+
+    steps:
+      # Step 1: Download the exact tested WAR created in Job 1
+      - name: Download WAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vpms-war
+          path: deploy-artifact
+
+      # Step 2: Start Tomcat only if port 8090 has no listener
+      - name: Start Tomcat if stopped
+        run: |
+          # Tomcat listens on this port on the Windows host
+          $tomcatPort = 8090
+
+          # Local Apache Tomcat installation folder
+          $tomcatBin = 'E:\apache-tomcat-10.1.28\bin'
+
+          # Tomcat startup batch file
+          $startupBat = Join-Path $tomcatBin 'startup.bat'
+
+          # Check whether any process already listens on port 8090
+          $listener = Get-NetTCPConnection `
+            -LocalPort $tomcatPort `
+            -State Listen `
+            -ErrorAction SilentlyContinue
+
+          # Start Tomcat only if it is not running
+          if ($null -eq $listener) {
+            Write-Host "Tomcat is stopped. Starting Tomcat..."
+
+            # Stop with a clear error if startup.bat is missing
+            if (-not (Test-Path $startupBat -PathType Leaf)) {
+              throw "Tomcat startup.bat not found: $startupBat"
+            }
+
+            # Create a background cmd.exe process to start Tomcat
+            $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $startInfo.FileName = 'cmd.exe'
+            $startInfo.Arguments = "/c start `"`" /b `"$startupBat`""
+            $startInfo.WorkingDirectory = $tomcatBin
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+
+            # Prevent GitHub runner from tracking and killing the Tomcat process
+            $startInfo.EnvironmentVariables.Remove('RUNNER_TRACKING_ID')
+
+            # Start the Tomcat process
+            [System.Diagnostics.Process]::Start($startInfo)
+
+            # Wait up to 45 seconds for Tomcat to listen on port 8090
+            $deadline = (Get-Date).AddSeconds(45)
+
+            do {
+              Start-Sleep -Seconds 2
+
+              $listener = Get-NetTCPConnection `
+                -LocalPort $tomcatPort `
+                -State Listen `
+                -ErrorAction SilentlyContinue
+            }
+            while ($null -eq $listener -and (Get-Date) -lt $deadline)
+
+            # Fail if Tomcat never started
+            if ($null -eq $listener) {
+              throw "Tomcat did not start on port $tomcatPort within 45 seconds."
+            }
+
+            Write-Host "Tomcat started successfully on port $tomcatPort."
+          }
+          else {
+            Write-Host "Tomcat is already running on port $tomcatPort."
+          }
+
+      # Step 3: Copy WAR into Tomcat webapps folder
+      - name: Copy WAR to Tomcat webapps
+        run: |
+          # Tomcat auto-deploys WAR files copied into this folder
+          $tomcatWebapps = 'E:\apache-tomcat-10.1.28\webapps'
+
+          # WAR downloaded from GitHub Actions artifact storage
+          $warSource = Join-Path $env:GITHUB_WORKSPACE 'deploy-artifact\vpms.war'
+
+          # Confirm required source file and destination folder exist
+          if (-not (Test-Path $warSource)) {
+            throw "WAR file not found: $warSource"
+          }
+
+          if (-not (Test-Path $tomcatWebapps)) {
+            throw "Tomcat webapps directory not found: $tomcatWebapps"
+          }
+
+          # Copy tested WAR to Tomcat webapps.
+          # -Force overwrites old vpms.war.
+          Copy-Item -LiteralPath $warSource -Destination $tomcatWebapps -Force
+
+          Write-Host "SUCCESS: WAR deployed to Tomcat."
+          Write-Host "Tomcat context path: /vpms"
+
+  # ============================================================================
+  # JOB 3: Build and Run Docker Container
+  #
+  # Result:
+  # Windows port 8092 --> Docker container/Spring Boot port 3031
+  # ============================================================================
+  docker-deploy:
+    name: Build and Run Docker
+    runs-on: [self-hosted, Windows]
+
+    # Run after Maven build/Nexus publishing and local Tomcat deployment succeed
+    needs:
+      - build-and-test
+      - deploy
+
+    # Do not deploy Docker for Pull Requests
+    if: github.event_name == 'push'
+
+    steps:
+      # Each job has a separate workspace.
+      # Checkout gives this job access to Dockerfile.
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # Download the exact WAR created and tested by build-and-test.
+      - name: Download WAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vpms-war
+          path: docker-artifact
+
+      # Dockerfile requires target/vpms.war.
+      # Artifact was downloaded to docker-artifact/vpms.war.
+      # Copy it to target/ before docker build.
+      - name: Prepare WAR for Docker build
+        run: |
+          $targetFolder = Join-Path $env:GITHUB_WORKSPACE 'target'
+          $warSource = Join-Path $env:GITHUB_WORKSPACE 'docker-artifact\vpms.war'
+          $warDestination = Join-Path $targetFolder 'vpms.war'
+
+          if (-not (Test-Path $warSource)) {
+            throw "Downloaded WAR artifact was not found: $warSource"
+          }
+
+          New-Item -ItemType Directory -Path $targetFolder -Force | Out-Null
+          Copy-Item -LiteralPath $warSource -Destination $warDestination -Force
+
+          if (-not (Test-Path $warDestination)) {
+            throw "WAR was not prepared for Docker build: $warDestination"
+          }
+
+          Write-Host "WAR prepared for Docker build: $warDestination"
+
+      # Shows Docker CLI version, current Docker context, and Docker Engine details.
+      - name: Check Docker installation and context
+        run: |
+          Write-Host "Docker executable path:"
+          Write-Host $env:DOCKER_BIN
+
+          if (-not (Test-Path $env:DOCKER_BIN)) {
+            throw "Docker executable was not found: $env:DOCKER_BIN"
+          }
+
+          Write-Host "Docker version:"
+          & $env:DOCKER_BIN version
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker version command failed."
+          }
+
+          Write-Host "Active Docker context:"
+          & $env:DOCKER_BIN context show
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker context command failed."
+          }
+
+          Write-Host "Available Docker contexts:"
+          & $env:DOCKER_BIN context ls
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker context list command failed."
+          }
+
+          Write-Host "Docker Engine information:"
+          & $env:DOCKER_BIN info
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker Engine is not available to the GitHub Actions runner."
+          }
+
+      # Build Docker image from Dockerfile.
+      - name: Build Docker image
+        run: |
+          $dockerfilePath = Join-Path $env:GITHUB_WORKSPACE 'Dockerfile'
+          $warPath = Join-Path $env:GITHUB_WORKSPACE 'target\vpms.war'
+
+          Write-Host "Workspace: $env:GITHUB_WORKSPACE"
+          Write-Host "Dockerfile: $dockerfilePath"
+          Write-Host "WAR file: $warPath"
+
+          if (-not (Test-Path $dockerfilePath)) {
+            throw "Dockerfile not found: $dockerfilePath"
+          }
+
+          if (-not (Test-Path $warPath)) {
+            throw "WAR file not found for Docker build: $warPath"
+          }
+
+          Write-Host "Building Docker image: $env:DOCKER_IMAGE"
+
+          & $env:DOCKER_BIN build --progress=plain -t $env:DOCKER_IMAGE .
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker image build failed."
+          }
+
+          # Verify the image truly exists after build.
+          $imageId = & $env:DOCKER_BIN image inspect `
+            --format "{{.Id}}" `
+            $env:DOCKER_IMAGE 2>$null
+
+          if ([string]::IsNullOrWhiteSpace($imageId)) {
+            throw "Docker image not found after build: $env:DOCKER_IMAGE"
+          }
+
+          Write-Host "SUCCESS: Docker image created."
+          Write-Host "Image ID: $imageId"
+
+          & $env:DOCKER_BIN image ls $env:DOCKER_IMAGE
+
+      # An old container with the same name would block docker run.
+      - name: Remove old Docker container
+        run: |
+          $existingContainer = & $env:DOCKER_BIN ps -a `
+            --filter "name=^$env:DOCKER_CONTAINER$" `
+            --format "{{.Names}}"
+
+          if ($existingContainer -eq $env:DOCKER_CONTAINER) {
+            Write-Host "Old Docker container found. Removing it..."
+
+            & $env:DOCKER_BIN rm --force $env:DOCKER_CONTAINER
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "Old Docker container could not be removed."
+            }
+          }
+          else {
+            Write-Host "No old Docker container found."
+          }
+
+      # Create and start the application container.
+      #
+      # -d       = detached/background mode
+      # --name   = stable container name
+      # -p       = Windows port 8092 --> container port 3031
+      - name: Run Docker container
+        run: |
+          Write-Host "Starting Docker container: $env:DOCKER_CONTAINER"
+
+          $containerId = & $env:DOCKER_BIN run -d `
+            --name $env:DOCKER_CONTAINER `
+            -p "$env:DOCKER_HOST_PORT`:$env:DOCKER_CONTAINER_PORT" `
+            -v "E:/vehiclePassManagementSystem/src/main/resources/application.properties:/config/application.properties:ro" `
+            -e "SPRING_CONFIG_ADDITIONAL_LOCATION=file:/config/application.properties" `
+            $env:DOCKER_IMAGE
+        
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker container could not be started."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($containerId)) {
+            throw "Docker did not return a container ID."
+          }
+
+          Write-Host "Container ID: $containerId"
+
+      # Wait briefly for Java/Spring Boot startup, then confirm container state.
+      - name: Check Docker container status
+        run: |
+          Start-Sleep -Seconds 10
+
+          Write-Host "Docker container details:"
+          & $env:DOCKER_BIN ps -a --filter "name=^$env:DOCKER_CONTAINER$"
+
+          $containerStatus = & $env:DOCKER_BIN inspect `
+            --format "{{.State.Status}}" `
+            $env:DOCKER_CONTAINER 2>$null
+
+          if ($containerStatus -ne "running") {
+            Write-Host "Container status: $containerStatus"
+            Write-Host "Container logs:"
+            & $env:DOCKER_BIN logs $env:DOCKER_CONTAINER
+            throw "Docker container is not running."
+          }
+
+          Write-Host "SUCCESS: Docker container is running."
+
+          Write-Host "Docker port mapping:"
+          & $env:DOCKER_BIN port $env:DOCKER_CONTAINER
+
+      # Spring Boot writes startup output to the container log.
+      - name: Show Docker application logs
+        run: |
+          & $env:DOCKER_BIN logs --tail 100 $env:DOCKER_CONTAINER
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not read Docker container logs."
+          }
