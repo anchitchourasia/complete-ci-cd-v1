@@ -14,7 +14,7 @@ public class VpmsApplication extends SpringBootServletInitializer {
 
         return application.sources(
         		VpmsApplication.class
-        );
+        ); 
     }
 
     public static void main(String[] args) {
