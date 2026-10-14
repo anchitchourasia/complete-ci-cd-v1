@@ -312,7 +312,7 @@ jobs:
             throw "Docker Engine is not available to the GitHub Actions runner."
           }
 
-      # Build Docker image from Dockerfile.
+            # Build Docker image from Dockerfile.
       - name: Build Docker image
         working-directory: backend
         run: |
@@ -339,12 +339,10 @@ jobs:
             throw "Docker image build failed."
           }
 
-          # Verify the image truly exists after build.
-          $imageId = & $env:DOCKER_BIN image inspect ` 
-            --format "{{.Id}}" `
-            $env:DOCKER_IMAGE 2>$null
+          # Verify the image exists after building.
+          $imageId = & $env:DOCKER_BIN image inspect --format "{{.Id}}" $env:DOCKER_IMAGE
 
-          if ([string]::IsNullOrWhiteSpace($imageId)) {
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($imageId)) {
             throw "Docker image not found after build: $env:DOCKER_IMAGE"
           }
 
@@ -353,6 +351,9 @@ jobs:
 
           & $env:DOCKER_BIN image ls $env:DOCKER_IMAGE
 
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not list the Docker image."
+          }
       # An old container with the same name would block docker run.
       - name: Remove old Docker container
         run: |
