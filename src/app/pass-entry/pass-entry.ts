@@ -347,6 +347,7 @@ export class PassEntry implements OnInit, OnDestroy {
     const enteredPassNo = String(this.passNo ?? "")
       .trim()
       .toUpperCase();
+    const enteredEmpType = this.empType().trim().toUpperCase(); // ← add this
 
     if (!enteredPassNo) {
       return false;
@@ -357,6 +358,7 @@ export class PassEntry implements OnInit, OnDestroy {
         String(pass.passNo ?? "")
           .trim()
           .toUpperCase() === enteredPassNo &&
+        String(pass.empType ?? "").trim().toUpperCase() === enteredEmpType && // ← add this
         pass.id !== Number(this.registryId ?? 0),
     );
   }
