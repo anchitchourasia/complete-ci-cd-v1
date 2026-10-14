@@ -51,6 +51,22 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Copy local Angular environment configuration
+        run: |
+          $source = 'D:\frontend pipeline\VPMS_Frontend\Frontend\src\environments\environment.ts'
+          $destination = Join-Path $env:GITHUB_WORKSPACE 'Frontend\src\environments\environment.ts'
+
+          if (-not (Test-Path $source -PathType Leaf)) {
+            throw "Local Angular environment configuration was not found."
+          }
+
+          $destinationFolder = Split-Path -Parent $destination
+          New-Item -ItemType Directory -Path $destinationFolder -Force | Out-Null
+
+          Copy-Item -LiteralPath $source -Destination $destination -Force
+
+          Write-Host "Angular environment configuration copied successfully."    
+
       - name: Install dependencies and build Angular
         working-directory: ${{ env.FRONTEND_DIR }}
         run: |
