@@ -86,6 +86,7 @@ jobs:
 
       # Step 2: Build WAR, run tests, and upload Maven artifact to Nexus
       - name: Build WAR, run tests, and upload to Nexus
+        working-directory: backend
         run: |
           # Add Java 17 bin folder to PATH for this PowerShell process
           $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
@@ -104,7 +105,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: vpms-war
-          path: target/vpms.war
+          path: backend/target/vpms.war
 
   # ============================================================================
   # JOB 2: Deploy WAR to Local Tomcat
@@ -256,7 +257,7 @@ jobs:
       # Copy it to target/ before docker build.
       - name: Prepare WAR for Docker build
         run: |
-          $targetFolder = Join-Path $env:GITHUB_WORKSPACE 'target'
+          $targetFolder = Join-Path $env:GITHUB_WORKSPACE 'backend\target'
           $warSource = Join-Path $env:GITHUB_WORKSPACE 'docker-artifact\vpms.war'
           $warDestination = Join-Path $targetFolder 'vpms.war'
 
@@ -313,9 +314,10 @@ jobs:
 
       # Build Docker image from Dockerfile.
       - name: Build Docker image
+        working-directory: backend
         run: |
-          $dockerfilePath = Join-Path $env:GITHUB_WORKSPACE 'Dockerfile'
-          $warPath = Join-Path $env:GITHUB_WORKSPACE 'target\vpms.war'
+          $dockerfilePath = Join-Path $env:GITHUB_WORKSPACE 'backend\Dockerfile'
+          $warPath = Join-Path $env:GITHUB_WORKSPACE 'backend\target\vpms.war'
 
           Write-Host "Workspace: $env:GITHUB_WORKSPACE"
           Write-Host "Dockerfile: $dockerfilePath"
