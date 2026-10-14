@@ -7,7 +7,7 @@ services:
     networks:
       - vpms-net
 
-  backend:
+  vehiclePassManagementSystem:
     image: vpms:1.0
     container_name: vpms-container
     ports:
