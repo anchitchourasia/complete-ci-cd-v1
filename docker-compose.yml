@@ -13,7 +13,7 @@ services:
     ports:
       - "8092:3031"
     volumes:
-      - "E:/vehiclePassManagementSystem/src/main/resources/application.properties:/config/application.properties:ro"
+      - "D:/frontend pipeline/VPMS_Frontend/backend/src/main/resources/application.properties:/config/application.properties:ro"
     environment:
       SPRING_CONFIG_ADDITIONAL_LOCATION: file:/config/application.properties
     networks:

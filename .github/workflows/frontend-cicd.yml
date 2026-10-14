@@ -104,26 +104,17 @@ jobs:
             Write-Host "No old frontend container found."
           }
 
-      - name: Run new frontend container
+      - name: Deploy frontend using Docker Compose
+        working-directory: ${{ github.workspace }}
         run: |
-          $ports = "{0}:{1}" -f $env:HOST_PORT, $env:CONTAINER_PORT
-
-          Write-Host "Starting frontend container on $ports"
-
-          $containerId = & $env:DOCKER_BIN run -d `
-            --name $env:DOCKER_CONTAINER `
-            -p $ports `
-            $env:DOCKER_IMAGE
+          & $env:DOCKER_BIN compose `
+            -p vpms `
+            -f docker-compose.yml `
+            up -d --no-deps --force-recreate frontend
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Could not start the new frontend container."
+            throw "Frontend Compose deployment failed."
           }
-
-          if ([string]::IsNullOrWhiteSpace($containerId)) {
-            throw "Docker did not return a container ID."
-          }
-
-          Write-Host "Frontend container ID: $containerId"
 
       - name: Verify frontend
         run: |

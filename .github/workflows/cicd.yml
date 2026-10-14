@@ -378,27 +378,17 @@ jobs:
       # -d       = detached/background mode
       # --name   = stable container name
       # -p       = Windows port 8092 --> container port 3031
-      - name: Run Docker container
+      - name: Deploy backend using Docker Compose
+        working-directory: ${{ github.workspace }}
         run: |
-          Write-Host "Starting Docker container: $env:DOCKER_CONTAINER"
-
-          $containerId = & $env:DOCKER_BIN run -d `
-            --name $env:DOCKER_CONTAINER `
-            -p "$env:DOCKER_HOST_PORT`:$env:DOCKER_CONTAINER_PORT" `
-            -v "E:/vehiclePassManagementSystem/src/main/resources/application.properties:/config/application.properties:ro" `
-            -e "SPRING_CONFIG_ADDITIONAL_LOCATION=file:/config/application.properties" `
-            $env:DOCKER_IMAGE
-
+          & $env:DOCKER_BIN compose `
+            -p vpms `
+            -f docker-compose.yml `
+            up -d --no-deps --force-recreate backend
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Docker container could not be started."
+            throw "Backend Compose deployment failed."
           }
-
-          if ([string]::IsNullOrWhiteSpace($containerId)) {
-            throw "Docker did not return a container ID."
-          }
-
-          Write-Host "Container ID: $containerId"
 
       # Wait briefly for Java/Spring Boot startup, then confirm container state.
       - name: Check Docker container status
