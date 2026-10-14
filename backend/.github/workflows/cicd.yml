@@ -16,7 +16,7 @@ name: CI/CD Pipeline - VPMS
 on:
   # Run workflow when code is pushed to these branches
   push:
-    branches: [main, backend1, b2]
+    branches: [main, backend1, b2, vpmsfinal]
 
   # Run build and test when Pull Request targets main
   pull_request:
@@ -386,7 +386,7 @@ jobs:
             -v "E:/vehiclePassManagementSystem/src/main/resources/application.properties:/config/application.properties:ro" `
             -e "SPRING_CONFIG_ADDITIONAL_LOCATION=file:/config/application.properties" `
             $env:DOCKER_IMAGE
-        
+
 
           if ($LASTEXITCODE -ne 0) {
             throw "Docker container could not be started."
@@ -430,3 +430,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Could not read Docker container logs."
           }
+  # ============================================================================
+  # JOB 4: Build and Deploy Frontend
+  # Implementation is in frontend-cicd.yml
+  # ============================================================================
+  frontend:
+    name: Frontend Pipeline
+    needs: docker-deploy
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/frontend-cicd.yml

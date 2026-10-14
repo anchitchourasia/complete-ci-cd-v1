@@ -1,0 +1,159 @@
+name: Frontend CI/CD
+
+
+on:
+  workflow_call:
+
+
+permissions:
+  contents: read
+
+
+env:
+  FRONTEND_DIR: Frontend
+  NODE_VERSION: "24"
+  BUILD_SCRIPT: build
+  BUILD_CONFIGURATION: production
+
+  OUTPUT_BASE: dist/vpms-ui
+
+  DOCKER_IMAGE: vpms-frontend:1.0
+  DOCKER_CONTAINER: vpms-frontend
+  HOST_PORT: "4200"
+  CONTAINER_PORT: "80"
+  DOCKER_BIN: 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
+
+  HTTP_PROXY: "http://192.168.9.112:808"
+  HTTPS_PROXY: "http://192.168.9.112:808"
+  NO_PROXY: "192.168.8.25,localhost,127.0.0.1"
+
+
+defaults:
+  run:
+    shell: powershell
+
+
+jobs:
+  frontend:
+    name: Build and Deploy Frontend
+    runs-on: [self-hosted, Windows]
+
+    concurrency:
+      group: vpms-frontend-deployment
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies and build Angular
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: |
+          npm.cmd ci
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm ci failed."
+          }
+
+          npm.cmd run $env:BUILD_SCRIPT -- `
+            "--configuration=$env:BUILD_CONFIGURATION" `
+            "--output-path=$env:OUTPUT_BASE" `
+            "--base-href=/vpms-ui/"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Angular build failed."
+          }
+
+          if (-not (Test-Path "$env:OUTPUT_BASE/browser/index.html")) {
+            throw "Angular build output is missing."
+          }
+
+      - name: Build Docker image
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: |
+          & $env:DOCKER_BIN info
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker Engine is unavailable."
+          }
+
+          & $env:DOCKER_BIN build -t $env:DOCKER_IMAGE .
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker image build failed."
+          }
+
+      - name: Remove old frontend container
+        run: |
+          $containers = & $env:DOCKER_BIN ps -a --format "{{.Names}}"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not list containers."
+          }
+
+          if (@($containers) -contains $env:DOCKER_CONTAINER) {
+            Write-Host "Removing old frontend container..."
+
+            & $env:DOCKER_BIN rm -f $env:DOCKER_CONTAINER
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not remove the old frontend container."
+            }
+          }
+          else {
+            Write-Host "No old frontend container found."
+          }
+
+      - name: Run new frontend container
+        run: |
+          $ports = "{0}:{1}" -f $env:HOST_PORT, $env:CONTAINER_PORT
+
+          Write-Host "Starting frontend container on $ports"
+
+          $containerId = & $env:DOCKER_BIN run -d `
+            --name $env:DOCKER_CONTAINER `
+            -p $ports `
+            $env:DOCKER_IMAGE
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not start the new frontend container."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($containerId)) {
+            throw "Docker did not return a container ID."
+          }
+
+          Write-Host "Frontend container ID: $containerId"
+
+      - name: Verify frontend
+        run: |
+          $url = "http://127.0.0.1:$env:HOST_PORT/vpms-ui/"
+          $ready = $false
+
+          for ($attempt = 1; $attempt -le 10; $attempt++) {
+            try {
+              $response = Invoke-WebRequest -Uri $url `
+                -UseBasicParsing -TimeoutSec 5
+
+              if ($response.StatusCode -eq 200) {
+                $ready = $true
+                break
+              }
+            }
+            catch {
+              Write-Host "Waiting for frontend..."
+            }
+
+            Start-Sleep -Seconds 2
+          }
+
+          & $env:DOCKER_BIN logs --tail 30 $env:DOCKER_CONTAINER
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not read frontend container logs."
+          }
+
+          if (-not $ready) {
+            throw "Frontend did not respond successfully at $url"
+          }
+
+          Write-Host "SUCCESS: Frontend available at $url"

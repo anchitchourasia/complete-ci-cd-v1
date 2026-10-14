@@ -1,0 +1,24 @@
+services:
+  frontend:
+    image: vpms-frontend:1.0
+    container_name: vpms-frontend
+    ports:
+      - "4200:80"
+    networks:
+      - vpms-net
+
+  backend:
+    image: vpms:1.0
+    container_name: vpms-container
+    ports:
+      - "8092:3031"
+    volumes:
+      - "E:/vehiclePassManagementSystem/src/main/resources/application.properties:/config/application.properties:ro"
+    environment:
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:/config/application.properties
+    networks:
+      - vpms-net
+
+networks:
+  vpms-net:
+    driver: bridge
