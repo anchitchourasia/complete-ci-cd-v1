@@ -137,7 +137,7 @@ jobs:
           $url = "http://127.0.0.1:$env:HOST_PORT/vpms-ui/"
           $ready = $false
 
-          for ($attempt = 1; $attempt -le 10; $attempt++) {
+          for ($attempt = 1; $attempt -le 10; $attempt++) { 
             try {
               $response = Invoke-WebRequest -Uri $url `
                 -UseBasicParsing -TimeoutSec 5
