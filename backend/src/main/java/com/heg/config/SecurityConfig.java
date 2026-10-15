@@ -85,17 +85,12 @@ public class SecurityConfig {
                 .authenticationProvider(authenticationProvider())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers("/api/authority/**").permitAll()
+                        .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/admin/**").permitAll()
 
                         // Existing Angular + Android APIs
                         .requestMatchers("/api/passes/**").permitAll()
                         .requestMatchers("/api/reports/**").permitAll()
-                        .requestMatchers("/api/history/**").permitAll()
-                        .requestMatchers("/api/admin/users/**").permitAll()
-                        
-                        
-                        
 
                         .anyRequest().authenticated()
                 )

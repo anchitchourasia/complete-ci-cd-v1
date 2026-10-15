@@ -512,7 +512,15 @@ public class PassRegistryServiceImpl implements IPassRegistryService {
 
         for (Object[] obj : list) {
 
-        	
+        	 for (int i = 0; i < obj.length; i++) {
+        	        System.out.println(
+        	            "Index = " + i +
+        	            ", Value = " + obj[i] +
+        	            ", Type = " + (obj[i] == null ? "null" : obj[i].getClass().getName())
+        	        );
+        	    }
+
+        	    System.out.println("--------------------------------");
         	    
         	PassRegistryListDTO dto = new PassRegistryListDTO();
 
@@ -530,8 +538,6 @@ public class PassRegistryServiceImpl implements IPassRegistryService {
             dto.setContractorCode(obj[10] == null ? null : obj[10].toString());
             dto.setContractorName(obj[11] == null ? null : obj[11].toString());
             dto.setAadhaarNo(obj[12] == null ? null : obj[12].toString());
-            dto.setMobileNo(obj[13] == null ? null : obj[13].toString());
-            dto.setEntryDate(obj[14] == null ? null : obj[14].toString());
 
             dtoList.add(dto);
         }

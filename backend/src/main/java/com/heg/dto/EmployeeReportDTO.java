@@ -17,18 +17,6 @@ public class EmployeeReportDTO {
 	    private String aadhaarNo;
 
 	    private String empType;
-	    
-	    private String mobileNo;
-	    
-	    
-
-		public String getMobileNo() {
-			return mobileNo;
-		}
-
-		public void setMobileNo(String mobileNo) {
-			this.mobileNo = mobileNo;
-		}
 
 		public Long getId() {
 			return id;

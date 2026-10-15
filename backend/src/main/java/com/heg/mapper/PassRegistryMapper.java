@@ -79,8 +79,6 @@ public class PassRegistryMapper {
 		dto.setParkingToBeUsed(entity.getParkingToBeUsed());
 		dto.setReqStatus(entity.getReqStatus());
 		dto.setPassNo(entity.getPassNo());
-		dto.setEnterBy(entity.getEnterBy());
-		dto.setEnterDate(entity.getEnterDate());
 		
 		
 
