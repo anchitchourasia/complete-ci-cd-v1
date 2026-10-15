@@ -20,7 +20,7 @@ on:
 
   # Run build and test when Pull Request targets main
   pull_request:
-    branches: [main]
+    branches: [main] 
 
 # ------------------------------------------------------------------------------
 # 2. Default Shell Settings
