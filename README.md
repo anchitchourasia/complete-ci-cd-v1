@@ -8,7 +8,9 @@ A full-stack **Vehicle Pass Management System (VPMS)** built with **Java Spring 
 
 <!-- DRAG AND DROP YOUR GENERATED PNG IMAGE BELOW THIS LINE IN THE GITHUB EDITOR -->
 
-https://drive.google.com/file/d/1-jAvsqcTp8bc4ZkYMm0U_zYEm3xn6TXY/view?usp=drive_link
+<p align="center">
+  <img src="https://lh3.googleusercontent.com/d/1-jAvsqcTp8bc4ZkYMm0U_zYEm3xn6TXY" alt="VPMS CI/CD Pipeline Architecture" width="100%" />
+</p>
 
 
 ### Interactive Pipeline Flow (GitHub Native Mermaid Diagram)
