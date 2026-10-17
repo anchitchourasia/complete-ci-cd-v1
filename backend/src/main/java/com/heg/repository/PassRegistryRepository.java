@@ -24,7 +24,9 @@ public interface PassRegistryRepository extends JpaRepository<PassRegistry, Long
 		            b.DEPT_NAME,
 		            b.CONTRACTOR_CODE,
 		            b.CONTRACTOR_NAME,
-		            b.AADHAAR_NO
+		            b.AADHAAR_NO,
+		            a.MOBILE_NO ,
+		            a.ENTER_DATE      
 		        FROM CW.VPMS_PASS_REGISTRY a
 		        JOIN ATTD.VPMS_EMPLOYEE b
 		          ON a.EMPLOYEE_NO = b.ID

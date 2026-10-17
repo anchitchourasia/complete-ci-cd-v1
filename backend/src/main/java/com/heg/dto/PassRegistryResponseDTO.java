@@ -25,6 +25,8 @@ public class PassRegistryResponseDTO {
 	    private String parkingToBeUsed;
 
 	    private String enterBy;
+	    
+	    private String mobileNo;
 
 	    private LocalDate enterDate;
 	    
@@ -133,6 +135,14 @@ public class PassRegistryResponseDTO {
 
 		public void setEnterBy(String enterBy) {
 			this.enterBy = enterBy;
+		}
+		
+		public String getMobileNo() {
+		    return mobileNo;
+		}
+
+		public void setMobileNo(String mobileNo) {
+		    this.mobileNo = mobileNo;
 		}
 
 		public LocalDate getEnterDate() {

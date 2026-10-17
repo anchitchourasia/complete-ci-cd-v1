@@ -1,10 +1,20 @@
 package com.heg.controller;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,11 +29,13 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.multipart.MultipartHttpServletRequest;
 
+import com.heg.dto.PassExpiryResponseDTO;
 import com.heg.dto.PassRegistryListDTO;
 import com.heg.dto.PassRegistryRequestDTO;
 import com.heg.dto.PassRegistryResponseDTO;
 import com.heg.dto.StatusUpdateRequestDTO;
 import com.heg.service.IPassRegistryService;
+import com.heg.service.PassExpiryService;
 
 @RestController
 @RequestMapping("/api/passes")
@@ -31,9 +43,18 @@ public class PassRegistryController {
 
     @Autowired
     private IPassRegistryService service;
+    
+    @Autowired
+    private PassExpiryService passExpiryService;
 
+    
+    
     private static final String API_KEY = "VPMS_SECRET_KEY_2026";
 
+    @Value("${app.upload.dir}")
+    private String uploadDir;
+    
+    
     @GetMapping("/test")
     public ResponseEntity<String> test() {
         return ResponseEntity.ok("Hii VPMS");
@@ -122,34 +143,7 @@ public class PassRegistryController {
     
     
     
-    
-
-//    @GetMapping("/documents/download/{documentId}")
-//    public ResponseEntity<?> downloadDocument(
-//            @PathVariable Long documentId,
-//            @RequestHeader(value = "x-api-key", required = false) String apiKey) throws IOException {
-//
-//        if (!API_KEY.equals(apiKey)) {
-//            return ResponseEntity.status(401).body("Invalid API Key");
-//        }
-//
-//        byte[] fileData = service.getDocumentBytes(documentId);
-//        String fileName = service.getDocumentFileName(documentId);
-//        String contentType = service.getDocumentContentType(documentId);
-//
-//        ByteArrayResource resource = new ByteArrayResource(fileData);
-//
-//        return ResponseEntity.ok()
-//                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
-//                .contentType(
-//                        (contentType != null && !contentType.isBlank())
-//                                ? MediaType.parseMediaType(contentType)
-//                                : MediaType.APPLICATION_OCTET_STREAM
-//                )
-//                .contentLength(fileData.length)
-//                .body(resource);
-//    }
-    
+   
     
     @GetMapping("/{id}")
     public PassRegistryResponseDTO getPassById(
@@ -159,22 +153,78 @@ public class PassRegistryController {
     }
     
     
-    @GetMapping("/documents/download/{documentId}")
+    @GetMapping("/documents/download/{fileName:.+}")
     public ResponseEntity<?> downloadDocument(
-            @PathVariable Long documentId,
-            @RequestHeader(value = "x-api-key", required = false) String apiKey) throws IOException {
+            @PathVariable String fileName,
+            @RequestHeader(value = "x-api-key", required = false) String apiKey) {
 
         if (!API_KEY.equals(apiKey)) {
-            return ResponseEntity.status(401).body("Invalid API Key");
+            return ResponseEntity
+                    .status(HttpStatus.UNAUTHORIZED)
+                    .body("Invalid API Key");
         }
 
-        byte[] fileData = service.getDocumentBytes(documentId);
-        String fileName = service.getDocumentFileName(documentId);
-        String contentType = service.getDocumentContentType(documentId);
+        try {
+            // Network share folder from application.properties
+            Path uploadDirectory = Paths.get(uploadDir)
+                    .toAbsolutePath()
+                    .normalize();
 
-        return ResponseEntity.ok()
-                .header("Content-Disposition", "attachment; filename=\"" + fileName + "\"")
-                .contentType(MediaType.parseMediaType(contentType))
-                .body(fileData);
+            // Resolve only within VPMS upload directory
+            Path filePath = uploadDirectory
+                    .resolve(fileName)
+                    .normalize();
+
+            // Security: blocks filename values such as ../../application.properties
+            if (!filePath.startsWith(uploadDirectory)) {
+                return ResponseEntity
+                        .status(HttpStatus.BAD_REQUEST)
+                        .body("Invalid file name");
+            }
+
+            if (!Files.exists(filePath) || !Files.isRegularFile(filePath)) {
+                return ResponseEntity
+                        .status(HttpStatus.NOT_FOUND)
+                        .body("Document not found: " + fileName);
+            }
+
+            Resource resource = new UrlResource(filePath.toUri());
+
+            String contentType = Files.probeContentType(filePath);
+            if (contentType == null) {
+                contentType = MediaType.APPLICATION_OCTET_STREAM_VALUE;
+            }
+
+            String downloadedFileName = filePath.getFileName().toString();
+
+            ContentDisposition disposition = ContentDisposition
+                    .attachment()
+                    .filename(downloadedFileName, StandardCharsets.UTF_8)
+                    .build();
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(contentType))
+                    .contentLength(Files.size(filePath))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+                    .body(resource);
+
+        } catch (IOException exception) {
+            exception.printStackTrace();
+
+            return ResponseEntity
+                    .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Unable to download document");
+        }
+    }
+    
+    
+    
+    @GetMapping("/expiry-details")
+    public ResponseEntity<List<PassExpiryResponseDTO>> getPassExpiryDetails() {
+
+        List<PassExpiryResponseDTO> response =
+                passExpiryService.getPassExpiryDetails();
+
+        return ResponseEntity.ok(response);
     }
 }

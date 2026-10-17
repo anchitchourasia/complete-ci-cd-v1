@@ -16,7 +16,7 @@ public class PassRegistryRequestDTO {
     private String status;
     private String remark;
     private String enterBy;
-    
+    private String mobileNo;
     
     
 
@@ -34,6 +34,13 @@ public class PassRegistryRequestDTO {
 
 	public void setEnterBy(String enterBy) {
 		this.enterBy = enterBy;
+	}
+	public String getMobileNo() {
+	    return mobileNo;
+	}
+
+	public void setMobileNo(String mobileNo) {
+	    this.mobileNo = mobileNo;
 	}
 	
 	public String getStatus() {

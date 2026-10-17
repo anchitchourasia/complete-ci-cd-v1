@@ -28,7 +28,8 @@ public class EmployeeReportRepository {
                     CONTRACTOR_CODE,
                     CONTRACTOR_NAME,
                     AADHAAR_NO,
-                    EMP_TYPE
+                    EMP_TYPE,
+                    MOBILE_NO
                 FROM attd.VPMS_EMPLOYEE
                 WHERE ID = ?
                 """;
@@ -54,7 +55,8 @@ public class EmployeeReportRepository {
                     CONTRACTOR_CODE,
                     CONTRACTOR_NAME,
                     AADHAAR_NO,
-                    EMP_TYPE
+                    EMP_TYPE,
+                    MOBILE_NO
                 FROM attd.VPMS_EMPLOYEE
                 """;
 

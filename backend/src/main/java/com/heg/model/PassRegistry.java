@@ -74,6 +74,10 @@ public class PassRegistry {
 	    @Column(name = "PASS_NO", nullable = false)
 	    private Long passNo;
 	    
+	    @Column(name = "MOBILE_NO", length = 15)
+	    private String mobileNo;
+	    
+	    
 
 	    public Long getPassNo() {
 			return passNo;
@@ -179,7 +183,15 @@ public class PassRegistry {
 		public void setEnterDate(LocalDate enterDate) {
 			this.enterDate = enterDate;
 		}
+		
+		public String getMobileNo() {
+		    return mobileNo;
+		}
 
+		public void setMobileNo(String mobileNo) {
+		    this.mobileNo = mobileNo;
+		}
+     
 		public List<Document> getDocuments() {
 			return documents;
 		}

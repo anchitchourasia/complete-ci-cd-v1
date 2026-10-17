@@ -33,8 +33,10 @@ public class PassRegistryMapper {
 		entity.setParkingToBeUsed(dto.getParkingToBeUsed());
 		entity.setReqStatus(dto.getStatus());
 		entity.setEnterBy(dto.getEnterBy());
+		entity.setMobileNo(dto.getMobileNo());
 		entity.setEnterDate(LocalDate.now());
 		entity.setPassNo(dto.getPassNo());
+		
 		
 
 		return entity;
@@ -79,6 +81,9 @@ public class PassRegistryMapper {
 		dto.setParkingToBeUsed(entity.getParkingToBeUsed());
 		dto.setReqStatus(entity.getReqStatus());
 		dto.setPassNo(entity.getPassNo());
+		dto.setEnterBy(entity.getEnterBy());
+		dto.setMobileNo(entity.getMobileNo());
+		dto.setEnterDate(entity.getEnterDate());
 		
 		
 
@@ -113,6 +118,7 @@ public class PassRegistryMapper {
 		entity.setGateNo(dto.getGateNo());
 		entity.setParkingToBeUsed(dto.getParkingToBeUsed());
 		entity.setReqStatus(dto.getStatus());
+		entity.setMobileNo(dto.getMobileNo());
 		entity.setPassNo(dto.getPassNo());
 	}
 
