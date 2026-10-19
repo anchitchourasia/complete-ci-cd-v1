@@ -362,6 +362,34 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Could not list the Docker image."
           }
+      - name: Check runner Kubernetes connectivity
+        run: |
+          Write-Host "Runner identity:"
+          whoami
+
+          Write-Host "Runner user profile: $env:USERPROFILE"
+          Write-Host "KUBECONFIG: $env:KUBECONFIG"
+
+          Write-Host "Kubernetes API endpoint:"
+          $server = kubectl --context $env:K8S_CONTEXT config view --minify -o jsonpath='{.clusters[0].cluster.server}'
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($server)) {
+            throw "Could not read the Kubernetes endpoint from the runner's kubeconfig."
+          }
+
+          Write-Host $server
+
+          $apiUri = [uri]$server
+
+          Write-Host "API hostname resolution:"
+          [System.Net.Dns]::GetHostAddresses($apiUri.DnsSafeHost) |
+            ForEach-Object { Write-Host $_.IPAddressToString }
+
+          Write-Host "Kubernetes API connectivity:"
+          kubectl --context $env:K8S_CONTEXT get --raw=/version --request-timeout=15s
+          if ($LASTEXITCODE -ne 0) {
+            throw "Runner cannot reach or authenticate to the Kubernetes API."
+          }
+
       - name: Check Kubernetes backend prerequisites
         run: |
           kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get deployment vpms-backend
