@@ -13,6 +13,10 @@ name: CI/CD Pipeline - VPMS
 # ------------------------------------------------------------------------------
 # 1. Pipeline Event Triggers
 # ------------------------------------------------------------------------------
+concurrency:
+  group: vpms-docker-desktop-vpms-dev
+  cancel-in-progress: false
+
 on:
   # Run workflow when code is pushed to these branches
   push:
@@ -54,7 +58,10 @@ env:
   MAVEN_OPTS: "-Xmx512m -Xms256m"
 
   # Docker image name and tag
-  DOCKER_IMAGE: "vpms:1.0"
+  DOCKER_IMAGE: "vpms:k8s-${{ github.run_id }}-${{ github.run_attempt }}"
+
+  K8S_CONTEXT: "docker-desktop"
+  K8S_NAMESPACE: "vpms-dev"
 
   # Docker container name
   DOCKER_CONTAINER: "vpms-container"
@@ -313,6 +320,7 @@ jobs:
           }
 
             # Build Docker image from Dockerfile.
+
       - name: Build Docker image
         working-directory: backend
         run: |
@@ -354,75 +362,48 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Could not list the Docker image."
           }
-      # An old container with the same name would block docker run.
-      - name: Remove old Docker container
+      - name: Check Kubernetes backend prerequisites
         run: |
-          $existingContainer = & $env:DOCKER_BIN ps -a `
-            --filter "name=^$env:DOCKER_CONTAINER$" `
-            --format "{{.Names}}"
-
-          if ($existingContainer -eq $env:DOCKER_CONTAINER) {
-            Write-Host "Old Docker container found. Removing it..."
-
-            & $env:DOCKER_BIN rm --force $env:DOCKER_CONTAINER
-
-            if ($LASTEXITCODE -ne 0) {
-              throw "Old Docker container could not be removed."
-            }
-          }
-          else {
-            Write-Host "No old Docker container found."
-          }
-
-      # Create and start the application container.
-      #
-      # -d       = detached/background mode
-      # --name   = stable container name
-      # -p       = Windows port 8092 --> container port 3031
-      - name: Deploy backend using Docker Compose
-        working-directory: ${{ github.workspace }}
-        run: |
-          & $env:DOCKER_BIN compose `
-            -p vpms `
-            -f docker-compose.yml `
-            up -d --no-deps --force-recreate backend
-
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get deployment vpms-backend
           if ($LASTEXITCODE -ne 0) {
-            throw "Backend Compose deployment failed."
+            throw "Backend Deployment is unavailable to this runner."
           }
 
-      # Wait briefly for Java/Spring Boot startup, then confirm container state.
-      - name: Check Docker container status
-        run: |
-          Start-Sleep -Seconds 10
-
-          Write-Host "Docker container details:"
-          & $env:DOCKER_BIN ps -a --filter "name=^$env:DOCKER_CONTAINER$"
-
-          $containerStatus = & $env:DOCKER_BIN inspect `
-            --format "{{.State.Status}}" `
-            $env:DOCKER_CONTAINER 2>$null
-
-          if ($containerStatus -ne "running") {
-            Write-Host "Container status: $containerStatus"
-            Write-Host "Container logs:"
-            & $env:DOCKER_BIN logs $env:DOCKER_CONTAINER
-            throw "Docker container is not running."
-          }
-
-          Write-Host "SUCCESS: Docker container is running."
-
-          Write-Host "Docker port mapping:"
-          & $env:DOCKER_BIN port $env:DOCKER_CONTAINER
-
-      # Spring Boot writes startup output to the container log.
-      - name: Show Docker application logs
-        run: |
-          & $env:DOCKER_BIN logs --tail 100 $env:DOCKER_CONTAINER
-
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get secret vpms-backend-config -o name
           if ($LASTEXITCODE -ne 0) {
-            throw "Could not read Docker container logs."
+            throw "Required backend configuration Secret is missing or inaccessible."
           }
+
+      - name: Deploy backend to Kubernetes
+        run: |
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE set image deployment/vpms-backend "backend=$env:DOCKER_IMAGE"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Backend image update failed."
+          }
+
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE rollout status deployment/vpms-backend --timeout=300s
+          if ($LASTEXITCODE -ne 0) {
+            throw "Backend rollout did not complete within 300 seconds."
+          }
+
+      - name: Show backend deployment status
+        run: |
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get deployment vpms-backend -o wide
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not read backend Deployment status."
+          }
+
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get pods -l app=vpms-backend -o wide
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not read backend Pod status."
+          }
+
+      - name: Backend failure diagnostics
+        if: failure()
+        run: |
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get pods -l app=vpms-backend -o wide
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get events --sort-by=.metadata.creationTimestamp
+          exit 0   
   # ============================================================================
   # JOB 4: Build and Deploy Frontend
   # Implementation is in frontend-cicd.yml

@@ -15,9 +15,12 @@ env:
   BUILD_SCRIPT: build
   BUILD_CONFIGURATION: production
 
-  OUTPUT_BASE: dist/vpms-ui
+  OUTPUT_BASE: dist/vpms-ui-k8s
 
-  DOCKER_IMAGE: vpms-frontend:1.0
+  DOCKER_IMAGE: "vpms-frontend:k8s-${{ github.run_id }}-${{ github.run_attempt }}"
+
+  K8S_CONTEXT: "docker-desktop"
+  K8S_NAMESPACE: "vpms-dev"
   DOCKER_CONTAINER: vpms-frontend
   HOST_PORT: "4200"
   CONTAINER_PORT: "80"
@@ -96,71 +99,45 @@ jobs:
             throw "Docker Engine is unavailable."
           }
 
-          & $env:DOCKER_BIN build -t $env:DOCKER_IMAGE .
+          & $env:DOCKER_BIN build -f Dockerfile.k8s -t $env:DOCKER_IMAGE .
           if ($LASTEXITCODE -ne 0) {
             throw "Docker image build failed."
           }
-
-      - name: Remove old frontend container
+      - name: Deploy frontend to Kubernetes
         run: |
-          $containers = & $env:DOCKER_BIN ps -a --format "{{.Names}}"
+          $deploymentJson = kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get deployment vpms-frontend -o json
           if ($LASTEXITCODE -ne 0) {
-            throw "Could not list containers."
+            throw "Frontend Deployment is unavailable to this runner."
           }
 
-          if (@($containers) -contains $env:DOCKER_CONTAINER) {
-            Write-Host "Removing old frontend container..."
+          $deployment = ($deploymentJson -join "`n") | ConvertFrom-Json
+          $containers = @($deployment.spec.template.spec.containers)
 
-            & $env:DOCKER_BIN rm -f $env:DOCKER_CONTAINER
-            if ($LASTEXITCODE -ne 0) {
-              throw "Could not remove the old frontend container."
-            }
-          }
-          else {
-            Write-Host "No old frontend container found."
+          if ($containers.Count -ne 1) {
+            throw "Expected one frontend container. Specify its name explicitly before deploying."
           }
 
-      - name: Deploy frontend using Docker Compose
-        working-directory: ${{ github.workspace }}
+          $containerName = $containers[0].name
+
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE set image deployment/vpms-frontend "$containerName=$env:DOCKER_IMAGE"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Frontend image update failed."
+          }
+
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE rollout status deployment/vpms-frontend --timeout=300s
+          if ($LASTEXITCODE -ne 0) {
+            throw "Frontend rollout did not complete within 300 seconds."
+          }
+
+      - name: Show frontend deployment status
         run: |
-          & $env:DOCKER_BIN compose `
-            -p vpms `
-            -f docker-compose.yml `
-            up -d --no-deps --force-recreate frontend
-
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get deployment vpms-frontend -o wide
           if ($LASTEXITCODE -ne 0) {
-            throw "Frontend Compose deployment failed."
+            throw "Could not read frontend Deployment status."
           }
 
-      - name: Verify frontend
+      - name: Frontend failure diagnostics
+        if: failure()
         run: |
-          $url = "http://127.0.0.1:$env:HOST_PORT/vpms-ui/"
-          $ready = $false
-
-          for ($attempt = 1; $attempt -le 10; $attempt++) { 
-            try {
-              $response = Invoke-WebRequest -Uri $url `
-                -UseBasicParsing -TimeoutSec 5
-
-              if ($response.StatusCode -eq 200) {
-                $ready = $true
-                break
-              }
-            }
-            catch {
-              Write-Host "Waiting for frontend..."
-            }
-
-            Start-Sleep -Seconds 2
-          }
-
-          & $env:DOCKER_BIN logs --tail 30 $env:DOCKER_CONTAINER
-          if ($LASTEXITCODE -ne 0) {
-            throw "Could not read frontend container logs."
-          }
-
-          if (-not $ready) {
-            throw "Frontend did not respond successfully at $url"
-          }
-
-          Write-Host "SUCCESS: Frontend available at $url"
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get events --sort-by=.metadata.creationTimestamp
+          exit 0

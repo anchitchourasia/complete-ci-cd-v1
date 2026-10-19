@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: vpms-backend
+  namespace: vpms-dev
+
+spec:
+  replicas: 1
+
+  # Initial learning setup:
+  # stop the old backend Pod before starting its replacement.
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: vpms-backend
+
+  template:
+    metadata:
+      labels:
+        app: vpms-backend
+
+    spec:
+      automountServiceAccountToken: false
+
+      containers:
+        - name: backend
+          image: vpms:1.0
+          imagePullPolicy: Never
+
+          ports:
+            - name: http
+              containerPort: 3031
+
+          env:
+            - name: SPRING_CONFIG_ADDITIONAL_LOCATION
+              value: "file:/config/application.properties"
+
+          volumeMounts:
+            - name: backend-config
+              mountPath: /config
+              readOnly: true
+
+      volumes:
+        - name: backend-config
+          secret:
+            secretName: vpms-backend-config
+            items:
+              - key: application.properties
+                path: application.properties

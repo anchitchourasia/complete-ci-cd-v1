@@ -52,6 +52,14 @@
               "optimization": false,
               "extractLicenses": false,
               "sourceMap": true
+            },
+            "kubernetes": {
+              "fileReplacements": [
+                {
+                  "replace": "src/environments/environment.ts",
+                  "with": "src/environments/environment.k8s.ts"
+                }
+              ]
             }
           },
           "defaultConfiguration": "production"
