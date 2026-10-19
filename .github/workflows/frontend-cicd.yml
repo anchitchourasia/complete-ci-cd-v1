@@ -22,7 +22,7 @@ env:
   K8S_CONTEXT: "docker-desktop"
   K8S_NAMESPACE: "vpms-dev"
   DOCKER_CONTAINER: vpms-frontend
-  HOST_PORT: "4200"
+  HOST_PORT: "14200"
   CONTAINER_PORT: "80"
   DOCKER_BIN: 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
 
@@ -128,6 +128,106 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Frontend rollout did not complete within 300 seconds."
           }
+
+      - name: Restart frontend port-forward and verify UI
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $kubectlPath = (Get-Command kubectl -ErrorAction Stop).Source
+          $localPort = [int]$env:HOST_PORT
+          $url = "http://127.0.0.1:$localPort/vpms-ui/"
+
+          # Replace only this environment's previous frontend tunnel.
+          $contextPattern = '--context\s+' + [regex]::Escape($env:K8S_CONTEXT) + '(\s|$)'
+          $namespacePattern = '-n\s+' + [regex]::Escape($env:K8S_NAMESPACE) + '(\s|$)'
+          $portPattern = '\b' + $localPort + ':80\b'
+
+          $oldProcesses = Get-CimInstance Win32_Process -Filter "Name = 'kubectl.exe'" |
+            Where-Object {
+              $_.CommandLine -match '\bport-forward\b' -and
+              $_.CommandLine -match 'service/vpms-frontend(\s|$)' -and
+              $_.CommandLine -match $contextPattern -and
+              $_.CommandLine -match $namespacePattern -and
+              $_.CommandLine -match $portPattern
+            }
+
+          foreach ($oldProcess in $oldProcesses) {
+            Write-Host "Stopping old frontend port-forward PID $($oldProcess.ProcessId)"
+            Stop-Process -Id $oldProcess.ProcessId -Force
+          }
+
+          Start-Sleep -Seconds 2
+
+          $listener = Get-NetTCPConnection `
+            -LocalPort $localPort `
+            -State Listen `
+            -ErrorAction SilentlyContinue
+
+          if ($listener) {
+            throw "Port $localPort is occupied by another listener. Close the manual port-forward or investigate the listener."
+          }
+
+          $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+          $startInfo.FileName = $kubectlPath
+          $startInfo.Arguments = "--context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE port-forward --address 127.0.0.1 service/vpms-frontend ${localPort}:80"
+          $startInfo.UseShellExecute = $false
+          $startInfo.CreateNoWindow = $true
+          $startInfo.WorkingDirectory = $env:USERPROFILE
+
+          # Allow the tunnel to remain after this workflow finishes.
+          $startInfo.EnvironmentVariables.Remove("RUNNER_TRACKING_ID")
+
+          foreach ($name in @("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")) {
+            $startInfo.EnvironmentVariables.Remove($name)
+          }
+          $startInfo.EnvironmentVariables["NO_PROXY"] = "*"
+
+          $forward = [System.Diagnostics.Process]::Start($startInfo)
+          Write-Host "Started frontend port-forward PID $($forward.Id)"
+
+          $client = New-Object System.Net.WebClient
+          $client.Proxy = $null
+          $ready = $false
+
+          try {
+            for ($attempt = 1; $attempt -le 30; $attempt++) {
+              $forward.Refresh()
+
+              if ($forward.HasExited) {
+                throw "Port-forward exited with code $($forward.ExitCode)."
+              }
+
+              try {
+                $html = $client.DownloadString($url)
+                if ($html -match '(?i)<html') {
+                  $ready = $true
+                  break
+                }
+              }
+              catch {
+                Write-Host "Waiting for frontend HTTP response..."
+              }
+
+              Start-Sleep -Seconds 2
+            }
+
+            if (-not $ready) {
+              throw "Frontend HTML was not available at $url"
+            }
+          }
+          catch {
+            $forward.Refresh()
+            if (-not $forward.HasExited) {
+              $forward.Kill()
+            }
+            throw
+          }
+          finally {
+            $client.Dispose()
+          }
+
+          Write-Host "Frontend HTML check passed."
+          Write-Host "Login URL on the runner PC: http://localhost:$localPort/vpms-ui/#/login"
 
       - name: Show frontend deployment status
         run: |
