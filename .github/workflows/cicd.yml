@@ -409,6 +409,11 @@ jobs:
             throw "Backend image update failed."
           }
 
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE scale deployment/vpms-backend --replicas=2
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not set backend replicas to 2."
+          }
+
           kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE rollout status deployment/vpms-backend --timeout=300s
           if ($LASTEXITCODE -ne 0) {
             throw "Backend rollout did not complete within 300 seconds."

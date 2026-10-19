@@ -6,7 +6,7 @@ metadata:
   namespace: vpms-dev
 
 spec:
-  replicas: 1
+  replicas: 2
 
   # Initial learning setup:
   # stop the old backend Pod before starting its replacement.
