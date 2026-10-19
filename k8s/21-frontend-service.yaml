@@ -6,12 +6,13 @@ metadata:
   namespace: vpms-dev
 
 spec:
-  type: ClusterIP
+  type: LoadBalancer
 
   selector:
     app: vpms-frontend
 
   ports:
     - name: http
-      port: 80
+      protocol: TCP
+      port: 14200
       targetPort: http

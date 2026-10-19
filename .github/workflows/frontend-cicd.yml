@@ -229,6 +229,63 @@ jobs:
           Write-Host "Frontend HTML check passed."
           Write-Host "Login URL on the runner PC: http://localhost:$localPort/vpms-ui/#/login"
 
+      - name: Apply frontend Service and verify UI
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          # Bypass corporate proxies only in this Kubernetes/check step.
+          foreach ($name in @("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")) {
+            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+          }
+          $env:NO_PROXY = "*"
+
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE apply -f k8s/21-frontend-service.yaml
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not apply the frontend Service."
+          }
+
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get service vpms-frontend -o wide
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not read frontend Service status."
+          }
+
+          $url = "http://127.0.0.1:14200/vpms-ui/"
+          $ready = $false
+
+          $requestParameters = @{
+            Uri             = $url
+            UseBasicParsing = $true
+            TimeoutSec      = 5
+          }
+
+          for ($attempt = 1; $attempt -le 30; $attempt++) {
+            try {
+              $response = Invoke-WebRequest @requestParameters
+
+              if (
+                $response.StatusCode -eq 200 -and
+                $response.Content -match '(?i)<html'
+              ) {
+                $ready = $true
+                break
+              }
+            }
+            catch {
+              Write-Host "Waiting for frontend Service: attempt $attempt of 30"
+            }
+
+            Start-Sleep -Seconds 2
+          }
+
+          if (-not $ready) {
+            kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get service vpms-frontend -o wide
+            kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get pods -l app=vpms-frontend -o wide
+            throw "Frontend HTTP check failed at $url"
+          }
+
+          Write-Host "Frontend HTML check passed."
+          Write-Host "Login URL: http://localhost:14200/vpms-ui/#/login"
+
       - name: Show frontend deployment status
         run: |
           kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE get deployment vpms-frontend -o wide
