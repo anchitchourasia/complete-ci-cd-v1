@@ -52,7 +52,7 @@ env:
   HTTPS_PROXY: "http://192.168.9.112:808"
 
   # Local addresses that should not use the corporate proxy
-  NO_PROXY: "192.168.8.25,localhost,127.0.0.1"
+  NO_PROXY: "192.168.8.25,localhost,127.0.0.1,::1,kubernetes.docker.internal,host.docker.internal"
 
   # Maven JVM memory limits
   MAVEN_OPTS: "-Xmx512m -Xms256m"
