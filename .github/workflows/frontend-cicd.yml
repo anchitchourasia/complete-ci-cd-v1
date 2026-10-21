@@ -74,7 +74,7 @@ jobs:
 
             Write-Host "Copied and verified: $file"
           }
-          
+
       - name: Install dependencies and build Angular
         working-directory: ${{ env.FRONTEND_DIR }}
         run: |
@@ -149,6 +149,7 @@ jobs:
             Remove-Item "Env:$name" -ErrorAction SilentlyContinue
           }
           $env:NO_PROXY = "*"
+          [System.Net.WebRequest]::DefaultWebProxy = $null
 
           kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE apply -f k8s/21-frontend-service.yaml
           if ($LASTEXITCODE -ne 0) {
@@ -160,7 +161,7 @@ jobs:
             throw "Could not read frontend Service status."
           }
 
-          $url = "http://127.0.0.1:14200/vpms-ui/"
+          $url = "http://[::1]:14200/vpms-ui/"
           $ready = $false
 
           $requestParameters = @{
@@ -183,6 +184,7 @@ jobs:
             }
             catch {
               Write-Host "Waiting for frontend Service: attempt $attempt of 30"
+              Write-Host "Error: $($_.Exception.Message)"
             }
 
             Start-Sleep -Seconds 2
