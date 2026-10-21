@@ -10,7 +10,7 @@ env:
   FRONTEND_DIR: Frontend
   NODE_VERSION: "24"
   BUILD_SCRIPT: build
-  BUILD_CONFIGURATION: production
+  BUILD_CONFIGURATION: "production,kubernetes"
 
   OUTPUT_BASE: dist/vpms-ui-k8s
 
