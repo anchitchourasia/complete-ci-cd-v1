@@ -51,20 +51,30 @@ jobs:
 
       - name: Copy local Angular environment configuration
         run: |
-          $source = 'D:\frontend pipeline\VPMS_Frontend\Frontend\src\environments\environment.ts'
-          $destination = Join-Path $env:GITHUB_WORKSPACE 'Frontend\src\environments\environment.ts'
+          $ErrorActionPreference = "Stop"
 
-          if (-not (Test-Path $source -PathType Leaf)) {
-            throw "Local Angular environment configuration was not found."
-          }
+          $sourceFolder = 'D:\frontend pipeline\VPMS_Frontend\Frontend\src\environments'
+          $destinationFolder = Join-Path $env:GITHUB_WORKSPACE 'Frontend\src\environments'
 
-          $destinationFolder = Split-Path -Parent $destination
           New-Item -ItemType Directory -Path $destinationFolder -Force | Out-Null
 
-          Copy-Item -LiteralPath $source -Destination $destination -Force
+          foreach ($file in @('environment.ts', 'environment.k8s.ts')) {
+            $source = Join-Path $sourceFolder $file
+            $destination = Join-Path $destinationFolder $file
 
-          Write-Host "Angular environment configuration copied successfully."
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+              throw "Required local environment file is missing: $source"
+            }
 
+            Copy-Item -LiteralPath $source -Destination $destination -Force
+
+            if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) {
+              throw "Environment file was not copied: $destination"
+            }
+
+            Write-Host "Copied and verified: $file"
+          }
+          
       - name: Install dependencies and build Angular
         working-directory: ${{ env.FRONTEND_DIR }}
         run: |
