@@ -402,6 +402,14 @@ jobs:
             throw "Required backend configuration Secret is missing or inaccessible."
           }
 
+          
+      - name: Apply backend Service
+        run: |
+          kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE apply -f k8s/11-backend-service.yaml
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not apply the backend Service."
+          }
+
       - name: Deploy backend to Kubernetes
         run: |
           kubectl --context $env:K8S_CONTEXT -n $env:K8S_NAMESPACE set image deployment/vpms-backend "backend=$env:DOCKER_IMAGE"
